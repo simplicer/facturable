@@ -2,6 +2,7 @@
   "env": "dev",
   "api": { "listen": ":8080", "database": "var/api.sqlite" },
   "relay": { "ttl_days": 7, "poll_interval_seconds": 45 },
-  "aeat": { "environment": "preprod" },
+  "aeat": { "environment": "preprod",
+    "producer": { "name": "PRODUCTOR SL", "nif": "B00000000", "contact": "soporte@example.es" } },
   "log": { "level": "info", "dir": "var/log" }
 }

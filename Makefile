@@ -26,8 +26,11 @@ web-check:
 	cd web && npm run build
 
 version-check:
-	@test "$$(cat VERSION)" = "0.1.0-unstable" || test -n "$$(grep -q "$$(cat VERSION)" CHANGELOG.md && echo ok)"
-	@cd web && grep -q "$$(cat ../VERSION)" package.json
+	V=$$(cat VERSION); \
+	grep -q "$$V" CHANGELOG.md && \
+	grep -q "$$V" web/package.json && \
+	grep -q "version: $$V" docs/openapi.yaml && \
+	echo "version OK: $$V"
 
 acceptance:
 	bin/acceptance.sh

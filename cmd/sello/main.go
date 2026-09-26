@@ -43,6 +43,14 @@ import (
 func main() {
 	version := env("FACTURABLE_VERSION", "0.1.0-unstable")
 	db := env("SELLO_DB", "var/sello.sqlite")
+	produccion := os.Getenv("SELLO_AEAT") == "produccion"
+
+	prodName := env("SELLO_PRODUCER_NAME", "Facturable")
+	prodNIF := env("SELLO_PRODUCER_NIF", "B00000000")
+	prodContact := env("SELLO_PRODUCER_CONTACT", "soporte@facturable.es")
+	if produccion && (prodNIF == "B00000000" || prodName == "Facturable") {
+		log.Fatal("SELLO_PRODUCER_NIF/NAME/CONTACT reales obligatorios para remitir a producción (declaración responsable, art. 13-15)")
+	}
 	nif := mustEnv("SELLO_NIF")
 	nombre := env("SELLO_NOMBRE", nif)
 
@@ -124,6 +132,8 @@ func main() {
 	}()
 
 	pin := os.Getenv("SELLO_PIN")
+	// auth real en withPIN (middleware); guard queda como decorador neutro
+	guard := func(next http.HandlerFunc) http.HandlerFunc { return next }
 	certTries := newRateLimiter(5, time.Minute)
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /v1/certificates", func(w http.ResponseWriter, r *http.Request) {
@@ -135,6 +145,40 @@ func main() {
 		}
 		saveCertificate(w, r)
 	})
+	mux.HandleFunc("POST /v1/emails", guard(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			RecordUUID string `json:"record_uuid"`
+			To         string `json:"to"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+			writeErr(w, err)
+			return
+		}
+		f, ok, err := store.ByUUID(req.RecordUUID)
+		if err != nil || !ok {
+			writeErr(w, fmt.Errorf("no existe el registro solicitado"))
+			return
+		}
+		cfg := sello.SMTPConfig{
+			Host: env("SELLO_SMTP_HOST", ""), User: os.Getenv("SELLO_SMTP_USER"),
+			Password: os.Getenv("SELLO_SMTP_PASS"), From: env("SELLO_SMTP_FROM", ""),
+		}
+		if cfg.Host == "" {
+			writeErr(w, fmt.Errorf("SMTP no configurado (SELLO_SMTP_HOST)"))
+			return
+		}
+		pdfBytes, err := renderRecordPDF(f, nif, nombre)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		subject := fmt.Sprintf("Factura %s — VERI*FACTU", f.Serie)
+		if err := sello.SendInvoiceEmail(cfg, req.To, subject, pdfBytes, f.Serie+".pdf"); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"enviado": true, "to": req.To})
+	}))
 	mux.HandleFunc("GET /v1/version", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"data": map[string]string{"version": version}})
 	})
@@ -142,9 +186,9 @@ func main() {
 	mux.HandleFunc("GET /v1/declaration", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte(declaration.Text(declaration.Info{
-			ProducerName:    "Facturable",
-			ProducerNIF:     "B00000000", // datos definitivos del productor: T-8.1
-			ProducerContact: "soporte@facturable.es",
+			ProducerName:    prodName,
+			ProducerNIF:     prodNIF,
+			ProducerContact: prodContact,
 			SystemName:      "Facturable Sello", SystemID: "FS",
 			Version: version, Installation: "00001",
 			OnlyVerifactu: true, MultiOT: false,
@@ -213,38 +257,20 @@ func main() {
 		}
 		writeJSON(w, map[string]int{"enviados": n})
 	})
-	mux.HandleFunc("GET /v1/records/{uuid}/pdf", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /v1/records/{uuid}/pdf", guard(func(w http.ResponseWriter, r *http.Request) {
 		f, ok, err := store.ByUUID(r.PathValue("uuid"))
 		if err != nil || !ok {
 			writeErr(w, fmt.Errorf("no existe el registro solicitado"))
 			return
 		}
-		qrEnv := qr.Production
-		if os.Getenv("SELLO_AEAT") != "produccion" {
-			qrEnv = qr.Testing
-		}
-		urlQR, err := qr.VerificationURL(qrEnv, qr.Query{
-			NIF: f.NIF, InvoiceNumber: f.Serie, ExpeditionDate: f.Date, TotalAmount: f.Importe,
-		})
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-		b, err := pdf.Factura(pdf.DatosFactura{
-			EmpresaNombre: nombre, EmpresaNIF: nif,
-			Serie: f.Serie, Date: f.Date, Tipo: f.Tipo,
-			ClienteNIF: "",
-			Desgloses:  []pdf.DesgloseFactura{{Tipo: "", Base: baseDesde(f.Importe, f.Cuota), Cuota: f.Cuota}},
-			CuotaTotal: f.Cuota, ImporteTotal: f.Importe,
-			EstadoAEAT: f.Estado, CSV: f.CSV, URLCotejo: urlQR,
-		})
+		b, err := renderRecordPDF(f, nif, nombre)
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/pdf")
 		_, _ = w.Write(b)
-	})
+	}))
 
 	// Colección de registros: representación por query (JSON por defecto,
 	// CSV para la gestoría con formato=csv + filtros por fecha).
@@ -307,6 +333,22 @@ func (r *rateLimiter) allow(key string) bool {
 	}
 	r.seen[key]++
 	return r.seen[key] <= r.max
+}
+
+// installationNumber derives a stable per-machine installation id from
+// hostname+NIF (audit: the literal "00001" was not unique per install).
+func installationNumber(nif string) string {
+	host, err := os.Hostname()
+	if err != nil {
+		host = "unknown"
+	}
+	sum := sha256.Sum256([]byte(host + "|" + nif))
+	const hexDigits = "0123456789ABCDEF"
+	out := make([]byte, 5)
+	for i := range out {
+		out[i] = hexDigits[int(sum[i])%16]
+	}
+	return string(out)
 }
 
 // withPIN exige Authorization: Bearer <SELLO_PIN> en las rutas /v1/*.
@@ -402,6 +444,31 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// qrEnv selects the QR cotejo environment per SELLO_AEAT.
+func qrEnv() qr.Environment {
+	if os.Getenv("SELLO_AEAT") == "produccion" {
+		return qr.Production
+	}
+	return qr.Testing
+}
+
+// renderRecordPDF builds the stamped PDF for a ledger row.
+func renderRecordPDF(f persistence.LedgerRow, nif, nombre string) ([]byte, error) {
+	urlQR, err := qr.VerificationURL(qrEnv(), qr.Query{
+		NIF: f.NIF, InvoiceNumber: f.Serie, ExpeditionDate: f.Date, TotalAmount: f.Importe,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return pdf.Factura(pdf.DatosFactura{
+		EmpresaNombre: nombre, EmpresaNIF: nif,
+		Serie: f.Serie, Date: f.Date, Tipo: f.Tipo,
+		ClienteNIF: "",
+		Desgloses:  []pdf.DesgloseFactura{{Tipo: "", Base: baseDesde(f.Importe, f.Cuota), Cuota: f.Cuota}},
+		CuotaTotal: f.Cuota, ImporteTotal: f.Importe,
+		EstadoAEAT: f.Estado, CSV: f.CSV, URLCotejo: urlQR,
+	})
+}
 
 // baseDesde computa base = total - cuota with exact cents (audit fix).
 func baseDesde(importe, cuota string) string {
