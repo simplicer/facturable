@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"facturable/internal/sello/declaration"
 	"facturable/internal/sello/pdf"
 	"facturable/internal/verifactu/domain/qr"
 
@@ -36,6 +37,7 @@ import (
 )
 
 func main() {
+	version := env("FACTURABLE_VERSION", "0.1.0-unstable")
 	db := env("SELLO_DB", "var/sello.sqlite")
 	nif := mustEnv("SELLO_NIF")
 	nombre := env("SELLO_NOMBRE", nif)
@@ -54,7 +56,7 @@ func main() {
 		Sistema: application.SistemaLocal{
 			NombreProductor: "Facturable", NIFProductor: "B00000000", // productor real: T-8.1
 			NombreSistema: "Facturable Sello", IDSistema: "FS",
-			Version: "0.1.0", NumeroInstalacion: "00001",
+			Version: version, NumeroInstalacion: "00001",
 		},
 	}
 
@@ -92,6 +94,17 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /v1/certificate", saveCertificate)
 	mux.HandleFunc("GET /v1/connectivity", checkConnectivity)
+	mux.HandleFunc("GET /v1/declaration", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(declaration.Text(declaration.Info{
+			ProducerName:    "Facturable",
+			ProducerNIF:     "B00000000", // datos definitivos del productor: T-8.1
+			ProducerContact: "soporte@facturable.es",
+			SystemName:      "Facturable Sello", SystemID: "FS",
+			Version: version, Installation: "00001",
+			OnlyVerifactu: true, MultiOT: false,
+		})))
+	})
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"status": "ok", "app": "facturable-sello", "modo": modo})
 	})
