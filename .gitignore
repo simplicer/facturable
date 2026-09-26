@@ -1,0 +1,10 @@
+/var/
+/bin/*
+!/bin/.gitkeep
+/etc/*.local.json
+web/node_modules/
+web/.svelte-kit/
+web/build/
+*.sqlite
+*.p12
+dist/
