@@ -147,6 +147,41 @@ func (s *Store) RegistrarRemision(r RemisionGuardada) error {
 	return err
 }
 
+// Pendiente es un registro esperando remisión.
+type Pendiente struct {
+	ID    int64
+	Serie string
+	Fecha string
+	XML   string
+}
+
+// Pendientes devuelve los registros aún sin remitir (sin intento válido).
+// Los rechazos no reintentables requieren subsanación manual: no se
+// reenvían solos.
+func (s *Store) Pendientes(nif string, limite int) ([]Pendiente, error) {
+	rows, err := s.db.Query(`
+SELECT r.id, r.serie, r.fecha, r.xml
+FROM registros r
+WHERE r.nif = ?
+  AND NOT EXISTS (
+    SELECT 1 FROM remisiones e WHERE e.registro_id = r.id
+      AND e.estado IN ('correcto','aceptado_errores','rechazado'))
+ORDER BY r.id LIMIT ?;`, nif, limite)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo leer pendientes: %w", err)
+	}
+	defer rows.Close()
+	var out []Pendiente
+	for rows.Next() {
+		var p Pendiente
+		if err := rows.Scan(&p.ID, &p.Serie, &p.Fecha, &p.XML); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // FilaListado es la vista del libro para la UI y la exportación.
 type FilaListado struct {
 	ID                      int64
