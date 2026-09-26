@@ -7,13 +7,13 @@ import (
 )
 
 func TestSellarAnulacionEncadenaYValida(t *testing.T) {
-	alta, err := SellarAlta("B72877814", "Facturable Test SL", borradorPrueba(), sisPrueba, EstadoCadena{}, time.Now())
+	alta, err := SellarAlta("B72877814", "Facturable Test SL", testDraft(), sisPrueba, EstadoCadena{}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	cadena := EstadoCadena{Ultimo: &EnlaceTriple{Serie: alta.Serie, Fecha: alta.Fecha, Huella: alta.Huella}}
+	cadena := EstadoCadena{Last: &EnlaceTriple{Serie: alta.Serie, Fecha: alta.Fecha, Huella: alta.Huella}}
 
-	res, err := SellarAnulacion("B72877814", borradorPrueba().NumeroSerie, "05-01-2027", sisPrueba, cadena, time.Now())
+	res, err := SellarAnulacion("B72877814", testDraft().NumeroSerie, "05-01-2027", sisPrueba, cadena, time.Now())
 	if err != nil {
 		t.Fatalf("SellarAnulacion(): %v", err)
 	}

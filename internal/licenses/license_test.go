@@ -1,4 +1,4 @@
-package licencias
+package licenses
 
 import (
 	"strings"

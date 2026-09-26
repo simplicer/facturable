@@ -6,19 +6,19 @@ import (
 	"testing"
 	"time"
 
-	"facturable/internal/sello/persistencia"
+	"facturable/internal/sello/persistence"
 )
 
 func TestExportarPeriodoFiltraYFormatea(t *testing.T) {
-	store, err := persistencia.Abrir(t.TempDir() + "/exp.sqlite")
+	store, err := persistence.Abrir(t.TempDir() + "/exp.sqlite")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
 
-	guardar := func(serie, fecha string) {
+	storeRow := func(serie, fecha string) {
 		t.Helper()
-		if _, err := store.Guardar(persistencia.RegistroGuardado{
+		if _, err := store.Append(persistence.StoredRecord{
 			NIF: "B72877814", Serie: serie, Fecha: fecha, Tipo: "F1",
 			Generado: "2027-01-05T10:00:00+01:00", Cuota: "21.00", Importe: "121.00",
 			Huella: strings.Repeat(serie[len(serie)-1:], 1) + strings.Repeat("0", 63-len(serie)+1),
@@ -27,14 +27,14 @@ func TestExportarPeriodoFiltraYFormatea(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	guardar("F-2027-0001", "05-01-2027")
-	guardar("F-2027-0002", "05-02-2027")
-	guardar("F-2027-0003", "05-03-2027")
+	storeRow("F-2027-0001", "05-01-2027")
+	storeRow("F-2027-0002", "05-02-2027")
+	storeRow("F-2027-0003", "05-03-2027")
 
-	srv := &Servicio{Store: store, EmisorNIF: "B72877814"}
-	b, n, err := srv.ExportarPeriodo("01-01-2027", "31-01-2027")
+	srv := &Service{Store: store, EmisorNIF: "B72877814"}
+	b, n, err := srv.ExportPeriod("01-01-2027", "31-01-2027")
 	if err != nil {
-		t.Fatalf("ExportarPeriodo(): %v", err)
+		t.Fatalf("ExportPeriod(): %v", err)
 	}
 	if n != 1 {
 		t.Fatalf("filas del periodo = %d, want 1", n)
@@ -49,11 +49,11 @@ func TestExportarPeriodoFiltraYFormatea(t *testing.T) {
 }
 
 func TestExportarPeriodoValidaFechas(t *testing.T) {
-	srv := &Servicio{}
-	if _, _, err := srv.ExportarPeriodo("31-31-2027", "01-01-2027"); err == nil {
+	srv := &Service{}
+	if _, _, err := srv.ExportPeriod("31-31-2027", "01-01-2027"); err == nil {
 		t.Fatal("fecha inválida aceptada")
 	}
-	if _, _, err := srv.ExportarPeriodo("02-01-2027", "01-01-2027"); err == nil {
+	if _, _, err := srv.ExportPeriod("02-01-2027", "01-01-2027"); err == nil {
 		t.Fatal("rango invertido aceptado")
 	}
 	_ = time.Now

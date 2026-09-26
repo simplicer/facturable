@@ -1,10 +1,11 @@
-// Package ingesta convierte ficheros CSV del cliente en borradores de
-// factura validados. La plantilla documentada es una fila por desglose de
-// IVA; las filas que comparten numero_serie se agrupan en una factura.
+// Package ingest turns customer CSV files into validated invoice drafts.
+// The documented template is one row per VAT breakdown; rows sharing
+// numero_serie group into one invoice (column names are end-user facing
+// Spanish by design).
 //
 //	Cabecera obligatoria:
 //	numero_serie,fecha,tipo,descripcion,nif_cliente,nombre_cliente,tipo_impositivo,base,cuota
-package ingesta
+package ingest
 
 import (
 	"encoding/csv"
@@ -41,7 +42,7 @@ type Borrador struct {
 	desglosesFallidos bool // alguna fila de desglose suya ya reportó error
 }
 
-// ErrorFila localiza un problema de datos en el CSV original.
+// ErrorFila localiza un problem de datos en el CSV original.
 type ErrorFila struct {
 	Fila    int
 	Campo   string
@@ -65,7 +66,7 @@ func LeerCSV(r io.Reader) (borradores []Borrador, errores []ErrorFila) {
 	if err != nil {
 		return nil, []ErrorFila{{Fila: 1, Campo: "cabecera", Detalle: "no se pudo leer el CSV: " + err.Error()}}
 	}
-	indice, err := mapaColumnas(cabecera)
+	indice, err := columnIndex(cabecera)
 	if err != nil {
 		return nil, []ErrorFila{{Fila: 1, Campo: "cabecera", Detalle: err.Error()}}
 	}
@@ -84,7 +85,7 @@ func LeerCSV(r io.Reader) (borradores []Borrador, errores []ErrorFila) {
 			errores = append(errores, ErrorFila{Fila: numFila, Campo: "fila", Detalle: err.Error()})
 			continue
 		}
-		if filaVacia(fila) {
+		if emptyRow(fila) {
 			continue
 		}
 		if len(fila) != len(columnas) {
@@ -105,7 +106,7 @@ func LeerCSV(r io.Reader) (borradores []Borrador, errores []ErrorFila) {
 				NombreCliente: strings.TrimSpace(fila[indice["nombre_cliente"]]),
 				Fila:          numFila,
 			}
-			if e := erroresFilaCabecera(b, numFila); e != nil {
+			if e := validateRowHeader(b, numFila); e != nil {
 				errores = append(errores, *e)
 				continue // cabecera inválida: el borrador no entra
 			}
@@ -118,7 +119,7 @@ func LeerCSV(r io.Reader) (borradores []Borrador, errores []ErrorFila) {
 			Base:           strings.TrimSpace(fila[indice["base"]]),
 			Cuota:          strings.TrimSpace(fila[indice["cuota"]]),
 		}
-		if err := validarDesglose(d); err != nil {
+		if err := validateBreakdown(d); err != nil {
 			errores = append(errores, ErrorFila{Fila: numFila, Campo: "desglose", Detalle: err.Error()})
 			b.desglosesFallidos = true
 			continue
@@ -141,7 +142,7 @@ func LeerCSV(r io.Reader) (borradores []Borrador, errores []ErrorFila) {
 	return borradores, errores
 }
 
-func erroresFilaCabecera(b *Borrador, numFila int) *ErrorFila {
+func validateRowHeader(b *Borrador, numFila int) *ErrorFila {
 	if _, err := domain.NewSerieNumero(b.NumeroSerie); err != nil {
 		return &ErrorFila{Fila: numFila, Campo: "numero_serie", Detalle: err.Error()}
 	}
@@ -159,7 +160,7 @@ func erroresFilaCabecera(b *Borrador, numFila int) *ErrorFila {
 	return nil
 }
 
-func validarDesglose(d DesgloseBorrador) error {
+func validateBreakdown(d DesgloseBorrador) error {
 	tipo := strings.Replace(d.TipoImpositivo, ",", ".", 1)
 	if _, err := strconv.ParseFloat(tipo, 64); err != nil {
 		return fmt.Errorf("tipo impositivo %q no es un número", d.TipoImpositivo)
@@ -173,7 +174,7 @@ func validarDesglose(d DesgloseBorrador) error {
 	return nil
 }
 
-func mapaColumnas(cabecera []string) (map[string]int, error) {
+func columnIndex(cabecera []string) (map[string]int, error) {
 	out := map[string]int{}
 	for i, c := range cabecera {
 		out[norm(c)] = i
@@ -193,7 +194,7 @@ func norm(s string) string {
 	return s
 }
 
-func filaVacia(fila []string) bool {
+func emptyRow(fila []string) bool {
 	for _, c := range fila {
 		if strings.TrimSpace(c) != "" {
 			return false

@@ -75,7 +75,7 @@ func TestRegistrationRecordValidation(t *testing.T) {
 		{
 			name:     "wrong schema version",
 			mutate:   func(r *RegistrationRecord) { r.Version = "2.0" },
-			wantMsgs: []string{`la versión del registro debe ser 1.0: "2.0"`},
+			wantMsgs: []string{`la versión del chainRow debe ser 1.0: "2.0"`},
 		},
 		{
 			name: "missing issuer id",
@@ -166,7 +166,7 @@ func TestRegistrationRecordValidation(t *testing.T) {
 			mutate: func(r *RegistrationRecord) {
 				r.GeneratedAt = "2024-09-13T19:20:30"
 			},
-			wantMsgs: []string{"la fecha y hora de generación del registro (FechaHoraHusoGenRegistro) debe incluir el huso horario"},
+			wantMsgs: []string{"la fecha y hora de generación del chainRow (FechaHoraHusoGenRegistro) debe incluir el huso horario"},
 		},
 		{
 			name: "wrong fingerprint type",
@@ -187,7 +187,7 @@ func TestRegistrationRecordValidation(t *testing.T) {
 			mutate: func(r *RegistrationRecord) {
 				r.Chaining.PreviousRecord.Fingerprint = "DEADBEEF"
 			},
-			wantMsgs: []string{"la huella del registro anterior (Huella) debe ser el SHA-256 en hexadecimal mayúsculas de 64 caracteres"},
+			wantMsgs: []string{"la huella del chainRow anterior (Huella) debe ser el SHA-256 en hexadecimal mayúsculas de 64 caracteres"},
 		},
 		{
 			name: "first record marker without previous record",
@@ -201,7 +201,7 @@ func TestRegistrationRecordValidation(t *testing.T) {
 			mutate: func(r *RegistrationRecord) {
 				r.Chaining = &Chaining{FirstRecord: "X"}
 			},
-			wantMsgs: []string{`el indicador de primer registro (PrimerRegistro) solo admite S: "X"`},
+			wantMsgs: []string{`el indicador de primer chainRow (PrimerRegistro) solo admite S: "X"`},
 		},
 		{
 			name: "missing chaining",
@@ -306,7 +306,7 @@ func TestCancellationRecordValidation(t *testing.T) {
 func TestSubmissionValidation(t *testing.T) {
 	t.Run("empty submission", func(t *testing.T) {
 		err := NewSubmission(Issuer{Name: "EMPISA SL", TaxID: "B72877814"}).Validate()
-		if err == nil || !strings.Contains(err.Error(), "la remisión debe incluir al menos un registro de facturación") {
+		if err == nil || !strings.Contains(err.Error(), "la remisión debe incluir al menos un chainRow de facturación") {
 			t.Fatalf("Validate() = %v, want empty-records error", err)
 		}
 	})
@@ -328,7 +328,7 @@ func TestSubmissionValidation(t *testing.T) {
 		bad := validCancellation()
 		bad.Fingerprint = "no-es-una-huella"
 		err := NewSubmission(Issuer{Name: "E", TaxID: "X"}, validRegistration(), bad).Validate()
-		if err == nil || !strings.Contains(err.Error(), "registro 2: la huella (Huella) debe ser el SHA-256") {
+		if err == nil || !strings.Contains(err.Error(), "chainRow 2: la huella (Huella) debe ser el SHA-256") {
 			t.Fatalf("Validate() = %v, want position-prefixed error", err)
 		}
 	})

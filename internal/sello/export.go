@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"time"
 
-	"facturable/internal/sello/persistencia"
+	"facturable/internal/sello/persistence"
 )
 
-// ExportarLibro produce el CSV del periodo para la gestoría (libro de
+// ExportLedger produce el CSV del periodo para la gestoría (libro de
 // facturas emitidas con su estado AEAT). Disponible SIEMPRE, con o sin
 // licencia vigente: el usuario nunca es rehén de sus datos.
-func ExportarLibro(filas []persistencia.FilaListado) ([]byte, error) {
+func ExportLedger(filas []persistence.LedgerRow) ([]byte, error) {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
 	cabecera := []string{"Serie", "Fecha", "Tipo", "Base+Cuota", "CuotaTotal",
@@ -32,8 +32,8 @@ func ExportarLibro(filas []persistencia.FilaListado) ([]byte, error) {
 	return buf.Bytes(), w.Error()
 }
 
-// ExportarPeriodo vuelca el libro de un rango de fechas (DD-MM-AAAA).
-func (s *Servicio) ExportarPeriodo(desde, hasta string) ([]byte, int, error) {
+// ExportPeriod vuelca el libro de un rango de fechas (DD-MM-AAAA).
+func (s *Service) ExportPeriod(desde, hasta string) ([]byte, int, error) {
 	d, err := time.Parse("02-01-2006", desde)
 	if err != nil {
 		return nil, 0, fmt.Errorf("fecha inicial %q no válida (usa DD-MM-AAAA): %v", desde, err)
@@ -45,17 +45,17 @@ func (s *Servicio) ExportarPeriodo(desde, hasta string) ([]byte, int, error) {
 	if h.Before(d) {
 		return nil, 0, fmt.Errorf("la fecha final (%s) es anterior a la inicial (%s)", hasta, desde)
 	}
-	filas, err := s.Store.Listado(s.EmisorNIF, 0, 1_000_000_000, 1_000_000)
+	filas, err := s.Store.Ledger(s.EmisorNIF, 0, 1_000_000_000, 1_000_000)
 	if err != nil {
 		return nil, 0, err
 	}
 	seleccion := filtrarPeriodo(filas, d, h)
-	b, err := ExportarLibro(seleccion)
+	b, err := ExportLedger(seleccion)
 	return b, len(seleccion), err
 }
 
-func filtrarPeriodo(filas []persistencia.FilaListado, desde, hasta time.Time) []persistencia.FilaListado {
-	var out []persistencia.FilaListado
+func filtrarPeriodo(filas []persistence.LedgerRow, desde, hasta time.Time) []persistence.LedgerRow {
+	var out []persistence.LedgerRow
 	for _, f := range filas {
 		fecha, err := time.Parse("02-01-2006", f.Fecha)
 		if err != nil {

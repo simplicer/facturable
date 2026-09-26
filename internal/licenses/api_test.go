@@ -1,4 +1,4 @@
-package licencias
+package licenses
 
 import (
 	"database/sql"
@@ -20,7 +20,7 @@ func nuevoAPIPrueba(t *testing.T, ahora func() time.Time) (*API, *httptest.Serve
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	priv, _, err := CargarOGenerarClave(t.TempDir() + "/k.pem")
+	priv, _, err := LoadOrCreateKey(t.TempDir() + "/k.pem")
 	if err != nil {
 		t.Fatal(err)
 	}

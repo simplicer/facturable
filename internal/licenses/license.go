@@ -1,7 +1,7 @@
 // Package licencias holds the pure licensing domain: Ed25519-signed license
 // tokens and the "never hostage" gating rule. No IO, no clock, no network:
 // the current time is always injected by the caller.
-package licencias
+package licenses
 
 import (
 	"fmt"

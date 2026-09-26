@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const respuestaEjemplo = `<?xml version="1.0" encoding="UTF-8"?>
+const sampleResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
  xmlns:sf="https://www2.agenciatributaria.gob.es/static_files/common/internet/dep/aplicaciones/es/aeat/tike/cont/ws/RespuestaSuministro.xsd">
   <soapenv:Body>
@@ -43,7 +43,7 @@ const respuestaEjemplo = `<?xml version="1.0" encoding="UTF-8"?>
 
 func TestParseRespuesta(t *testing.T) {
 	t.Parallel()
-	resp, err := ParseRespuesta(respuestaEjemplo)
+	resp, err := ParseRespuesta(sampleResponse)
 	if err != nil {
 		t.Fatalf("ParseRespuesta() = %v", err)
 	}

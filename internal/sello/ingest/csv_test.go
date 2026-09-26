@@ -1,4 +1,4 @@
-package ingesta
+package ingest
 
 import (
 	"strings"

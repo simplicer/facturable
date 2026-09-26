@@ -1,7 +1,7 @@
-// Command sello es el agente local (el SIF): ingesta CSV, sella, remite a
-// la AEAT y expone el libro. Escucha SOLO en 127.0.0.1.
+// Command sello is the local agent (the SIF): CSV ingest, stamping, AEAT
+// submission and the ledger. It listens on 127.0.0.1 ONLY.
 //
-// Configuración por entorno:
+// Environment configuration:
 //
 //	SELLO_DB                    ruta de la base de datos (defecto var/sello.sqlite)
 //	SELLO_NIF / SELLO_NOMBRE    datos de la empresa que factura
@@ -28,7 +28,7 @@ import (
 	"facturable/internal/verifactu/domain/qr"
 
 	"facturable/internal/sello"
-	"facturable/internal/sello/persistencia"
+	"facturable/internal/sello/persistence"
 	"facturable/internal/verifactu/application"
 	"facturable/internal/verifactu/infrastructure/soap"
 
@@ -40,14 +40,14 @@ func main() {
 	nif := mustEnv("SELLO_NIF")
 	nombre := env("SELLO_NOMBRE", nif)
 
-	store, err := persistencia.Abrir(db)
+	store, err := persistence.Abrir(db)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer store.Close()
 
 	remisor, modo := construirRemisor()
-	srv := &sello.Servicio{
+	srv := &sello.Service{
 		Store: store, Remisor: remisor,
 		Flujo:     application.NewControlFlujo(time.Now),
 		EmisorNIF: nif, EmisorNombre: nombre,
@@ -62,23 +62,23 @@ func main() {
 	// por minuto encaja con el control de flujo (spec AEAT §6.4.4.1).
 	go func() {
 		for range time.Tick(60 * time.Second) {
-			n, err := srv.EnviarPendientes(context.Background())
+			n, err := srv.SubmitPending(context.Background())
 			if err != nil {
 				log.Printf("remisión: %v", err)
 			} else if n > 0 {
-				log.Printf("remisión: %d registro(s) enviados", n)
+				log.Printf("remisión: %d chainRow(s) enviados", n)
 			}
 		}
 	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("PUT /v1/certificate", guardarCertificado)
-	mux.HandleFunc("GET /v1/connectivity", probarConexion)
+	mux.HandleFunc("PUT /v1/certificate", saveCertificate)
+	mux.HandleFunc("GET /v1/connectivity", checkConnectivity)
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"status": "ok", "app": "facturable-sello", "modo": modo})
 	})
 	mux.HandleFunc("POST /v1/records", func(w http.ResponseWriter, r *http.Request) {
-		res, err := srv.IngestaCSV(r.Body)
+		res, err := srv.IngestCSV(r.Body)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -86,7 +86,7 @@ func main() {
 		writeJSON(w, res)
 	})
 	mux.HandleFunc("POST /v1/submissions", func(w http.ResponseWriter, _ *http.Request) {
-		n, err := srv.EnviarPendientes(context.Background())
+		n, err := srv.SubmitPending(context.Background())
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -96,12 +96,12 @@ func main() {
 	mux.HandleFunc("GET /v1/records/{id}/pdf", func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
-			writeErr(w, fmt.Errorf("identificador de registro no válido"))
+			writeErr(w, fmt.Errorf("identificador de chainRow no válido"))
 			return
 		}
-		f, ok, err := store.PorID(id)
+		f, ok, err := store.ByID(id)
 		if err != nil || !ok {
-			writeErr(w, fmt.Errorf("no existe el registro %d", id))
+			writeErr(w, fmt.Errorf("no existe el chainRow %d", id))
 			return
 		}
 		urlQR, err := qr.VerificationURL(qr.Production, qr.Query{
@@ -139,7 +139,7 @@ func main() {
 			if to == "" {
 				to = time.Now().Format("02-01-2006")
 			}
-			b, _, err := srv.ExportarPeriodo(from, to)
+			b, _, err := srv.ExportPeriod(from, to)
 			if err != nil {
 				writeErr(w, err)
 				return
@@ -149,7 +149,7 @@ func main() {
 			_, _ = w.Write(b)
 			return
 		}
-		filas, err := store.Listado(nif, 0, 1_000_000_000, 1000)
+		filas, err := store.Ledger(nif, 0, 1_000_000_000, 1000)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -167,7 +167,7 @@ func main() {
 func construirRemisor() (application.Remisor, string) {
 	p12 := os.Getenv("SELLO_CERT_P12")
 	if p12 == "" {
-		return remisorSimulado{}, "simulado (sin certificado)"
+		return fakeSubmitter{}, "simulado (sin certificado)"
 	}
 	cert, err := soap.LoadP12(p12, os.Getenv("SELLO_CERT_PASS"))
 	if err != nil {
@@ -180,12 +180,12 @@ func construirRemisor() (application.Remisor, string) {
 	return soap.NewCliente(url, cert), "aeat"
 }
 
-// remisorSimulado acepta cualquier XML devolviendo un veredicto correcto:
+// fakeSubmitter acepta cualquier XML devolviendo un veredicto correcto:
 // permite probar el circuito completo sin certificado ni red.
-type remisorSimulado struct{}
+type fakeSubmitter struct{}
 
-func (remisorSimulado) Remitir(_ context.Context, soapXML string) (application.RespuestaLote, error) {
-	serie, fecha := serieYFechaDelXML(soapXML)
+func (fakeSubmitter) Remitir(_ context.Context, soapXML string) (application.RespuestaLote, error) {
+	serie, fecha := seriesAndDateFromXML(soapXML)
 	return application.RespuestaLote{
 		EstadoGlobal: "Correcto", CSV: "SIMULADO0000000A",
 		Lineas: []application.RespuestaLinea{{
@@ -194,8 +194,8 @@ func (remisorSimulado) Remitir(_ context.Context, soapXML string) (application.R
 	}, nil
 }
 
-// serieYFechaDelXML extrae la primera IDFactura del sobre (sólo simulación).
-func serieYFechaDelXML(xmlStr string) (serie, fecha string) {
+// seriesAndDateFromXML extrae la primera IDFactura del sobre (sólo simulación).
+func seriesAndDateFromXML(xmlStr string) (serie, fecha string) {
 	extraer := func(ini, fin string) string {
 		i := strings.Index(xmlStr, ini)
 		if i < 0 {
@@ -252,9 +252,9 @@ func writeErr(w http.ResponseWriter, err error) {
 
 // onboarding de certificado -------------------------------------------------
 
-// guardarCertificado recibe un P12 por multipart y lo instala (0600) para
+// saveCertificate recibe un P12 por multipart y lo instala (0600) para
 // el próximo arranque. Contraseña por formulario aparte: nunca se guarda.
-func guardarCertificado(w http.ResponseWriter, r *http.Request) {
+func saveCertificate(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		writeErr(w, fmt.Errorf("no se pudo leer el formulario: %v", err))
 		return
@@ -289,9 +289,9 @@ func guardarCertificado(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// probarConexion verifica carga del certificado y handshake TLS contra el
+// checkConnectivity verifica carga del certificado y handshake TLS contra el
 // entorno de pruebas de la AEAT (prewww1). Diagnóstico de onboarding.
-func probarConexion(w http.ResponseWriter, _ *http.Request) {
+func checkConnectivity(w http.ResponseWriter, _ *http.Request) {
 	resultado := map[string]any{}
 	p12 := os.Getenv("SELLO_CERT_P12")
 	if p12 != "" {

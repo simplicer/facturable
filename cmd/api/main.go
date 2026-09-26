@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 
-	"facturable/internal/licencias"
+	"facturable/internal/licenses"
 	"facturable/internal/plataforma"
 
 	_ "modernc.org/sqlite"
@@ -32,12 +32,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
-	priv, _, err := licencias.CargarOGenerarClave("etc/licencias.ed25519")
+	priv, _, err := licenses.LoadOrCreateKey("etc/licenses.ed25519")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "claves:", err)
 		os.Exit(1)
 	}
-	apiLic, err := licencias.NuevaAPI(db, priv)
+	apiLic, err := licenses.NuevaAPI(db, priv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "licencias:", err)
 		os.Exit(1)

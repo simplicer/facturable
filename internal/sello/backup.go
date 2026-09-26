@@ -12,15 +12,15 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
-// backupMagic encabeza los ficheros de copia de seguridad.
+// backupMagic heads every backup file.
 var backupMagic = []byte("FBK1")
 
-// CrearBackup cifra (AES-256-GCM, clave PBKDF2-SHA256 de la contraseña) una
+// CreateBackup cifra (AES-256-GCM, clave PBKDF2-SHA256 de la contraseña) una
 // copia de la base de datos del libro. La copia se toma de un fichero
 // físicamente distinto: SQLite en WAL puede estar a mitad de checkpoint, así
 // que el destino recomendado es la herramienta sqlite de backup (véase
 // Makefile); aquí ciframos lo que el llamador entrega.
-func CrearBackup(rutaDB, rutaDestino, password string) error {
+func CreateBackup(rutaDB, rutaDestino, password string) error {
 	plain, err := os.ReadFile(rutaDB)
 	if err != nil {
 		return fmt.Errorf("no se pudo leer la base de datos: %v", err)
@@ -63,8 +63,8 @@ func CrearBackup(rutaDB, rutaDestino, password string) error {
 	return err
 }
 
-// RestaurarBackup descifra una copia a un fichero destino.
-func RestaurarBackup(rutaBackup, rutaDestino, password string) error {
+// RestoreBackup descifra una copia a un fichero destino.
+func RestoreBackup(rutaBackup, rutaDestino, password string) error {
 	raw, err := os.ReadFile(rutaBackup)
 	if err != nil {
 		return fmt.Errorf("no se pudo leer la copia: %v", err)

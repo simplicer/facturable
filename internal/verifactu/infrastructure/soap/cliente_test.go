@@ -26,7 +26,7 @@ func newTestClient(t *testing.T, status int, body string) (*Cliente, *httptest.S
 	return NewCliente(srv.URL, tls.Certificate{}), srv
 }
 
-const respuestaOK = `<?xml version="1.0"?>
+const okResponse = `<?xml version="1.0"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
  <soapenv:Body>
   <sf:RespuestaRegFactuSistemaFacturacion xmlns:sf="urn:test">
@@ -47,7 +47,7 @@ const respuestaOK = `<?xml version="1.0"?>
 </soapenv:Envelope>`
 
 func TestRemitirOK(t *testing.T) {
-	c, _ := newTestClient(t, http.StatusOK, respuestaOK)
+	c, _ := newTestClient(t, http.StatusOK, okResponse)
 	lote, err := c.Remitir(context.Background(), "<envelope/>")
 	if err != nil {
 		t.Fatalf("Remitir() = %v", err)

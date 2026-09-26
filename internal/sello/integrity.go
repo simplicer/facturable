@@ -3,28 +3,28 @@ package sello
 import (
 	"fmt"
 
-	"facturable/internal/sello/persistencia"
+	"facturable/internal/sello/persistence"
 	"facturable/internal/verifactu/domain"
 )
 
-// InformeIntegridad resume la verificación de la cadena del libro.
-type InformeIntegridad struct {
+// IntegrityReport resume la verificación de la cadena del libro.
+type IntegrityReport struct {
 	Registros int
 	Rupturas  []string
 }
 
-// Sana devuelve true cuando la cadena no tiene rupturas ni huellas inválidas.
-func (i InformeIntegridad) Sana() bool { return len(i.Rupturas) == 0 }
+// Healthy devuelve true cuando la cadena no tiene rupturas ni huellas inválidas.
+func (i IntegrityReport) Healthy() bool { return len(i.Rupturas) == 0 }
 
-// VerificarCadena recalcula la huella de CADA registro con los datos
+// VerifyChain recalcula la huella de CADA chainRow con los datos
 // almacenados y comprueba el encadenamiento completo (n→n-1): la
 // autocomprobación de integridad del SIF (RRSIF art. 8).
-func (s *Servicio) VerificarCadena() (*InformeIntegridad, error) {
-	registros, err := s.Store.CadenaCompleta(s.EmisorNIF)
+func (s *Service) VerifyChain() (*IntegrityReport, error) {
+	registros, err := s.Store.FullChain(s.EmisorNIF)
 	if err != nil {
 		return nil, err
 	}
-	info := &InformeIntegridad{Registros: len(registros)}
+	info := &IntegrityReport{Registros: len(registros)}
 
 	for idx, r := range registros {
 		anterior := ""
@@ -32,36 +32,36 @@ func (s *Servicio) VerificarCadena() (*InformeIntegridad, error) {
 			prev := registros[idx-1]
 			if r.EnlaceSerie != prev.Serie || r.EnlaceFecha != prev.Fecha || r.EnlaceHuella != prev.Huella {
 				info.Rupturas = append(info.Rupturas, fmt.Sprintf(
-					"registro %d (%s): su enlace no apunta al registro anterior (%s)",
+					"chainRow %d (%s): su enlace no apunta al chainRow anterior (%s)",
 					r.ID, r.Serie, prev.Serie))
 			}
 			anterior = prev.Huella
 		} else if r.EnlaceSerie != "" {
 			info.Rupturas = append(info.Rupturas, fmt.Sprintf(
-				"registro %d (%s): es el primero pero declara un enlace previo", r.ID, r.Serie))
+				"chainRow %d (%s): es el primero pero declara un enlace previo", r.ID, r.Serie))
 		}
 
 		var huella domain.Huella
 		var err error
 		if r.Tipo == "ANULACION" {
-			huella, err = recalcularAnulacion(s.EmisorNIF, r, anterior)
+			huella, err = recomputeCancellation(s.EmisorNIF, r, anterior)
 		} else {
-			huella, err = recalcularAlta(s.EmisorNIF, r, anterior)
+			huella, err = recomputeRegistration(s.EmisorNIF, r, anterior)
 		}
 		if err != nil {
-			info.Rupturas = append(info.Rupturas, fmt.Sprintf("registro %d (%s): %v", r.ID, r.Serie, err))
+			info.Rupturas = append(info.Rupturas, fmt.Sprintf("chainRow %d (%s): %v", r.ID, r.Serie, err))
 			continue
 		}
 		if huella.Value() != r.Huella {
 			info.Rupturas = append(info.Rupturas, fmt.Sprintf(
-				"registro %d (%s): huella recalculada %s ≠ almacenada %s",
+				"chainRow %d (%s): huella recalculada %s ≠ almacenada %s",
 				r.ID, r.Serie, huella.Value(), r.Huella))
 		}
 	}
 	return info, nil
 }
 
-func recalcularAlta(emisor string, r persistencia.RegistroCadena, anterior string) (domain.Huella, error) {
+func recomputeRegistration(emisor string, r persistence.ChainRecord, anterior string) (domain.Huella, error) {
 	nif, err := domain.NewNIF(emisor)
 	if err != nil {
 		return domain.Huella{}, err
@@ -90,25 +90,25 @@ func recalcularAlta(emisor string, r persistencia.RegistroCadena, anterior strin
 	if err != nil {
 		return domain.Huella{}, err
 	}
-	ant, err := huellaAnterior(anterior)
+	ant, err := previousHuella(anterior)
 	if err != nil {
 		return domain.Huella{}, err
 	}
 	return domain.HuellaRegistroAlta(domain.RegistroAltaHuella{
 		Emisor: nif, Serie: serie, Fecha: fecha, Tipo: tipo,
-		Cuota: cuota, Importe: importe, Generado: generado, Anterior: ant,
+		Cuota: cuota, Importe: importe, Generado: generado, Previous: ant,
 	})
 }
 
-// huellaAnterior admite la cadena vacía del primer registro.
-func huellaAnterior(anterior string) (domain.Huella, error) {
+// previousHuella admite la cadena vacía del primer chainRow.
+func previousHuella(anterior string) (domain.Huella, error) {
 	if anterior == "" {
 		return domain.Huella{}, nil
 	}
 	return domain.NewHuella(anterior)
 }
 
-func recalcularAnulacion(emisor string, r persistencia.RegistroCadena, anterior string) (domain.Huella, error) {
+func recomputeCancellation(emisor string, r persistence.ChainRecord, anterior string) (domain.Huella, error) {
 	nif, err := domain.NewNIF(emisor)
 	if err != nil {
 		return domain.Huella{}, err
@@ -125,11 +125,11 @@ func recalcularAnulacion(emisor string, r persistencia.RegistroCadena, anterior 
 	if err != nil {
 		return domain.Huella{}, err
 	}
-	ant, err := huellaAnterior(anterior)
+	ant, err := previousHuella(anterior)
 	if err != nil {
 		return domain.Huella{}, err
 	}
 	return domain.HuellaRegistroAnulacion(domain.RegistroAnulacionHuella{
-		Emisor: nif, Serie: serie, Fecha: fecha, Generado: generado, Anterior: ant,
+		Emisor: nif, Serie: serie, Fecha: fecha, Generado: generado, Previous: ant,
 	})
 }

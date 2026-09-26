@@ -12,7 +12,7 @@ var sisPrueba = SistemaLocal{
 	Version: "0.1.0", NumeroInstalacion: "00001",
 }
 
-func borradorPrueba() BorradorAlta {
+func testDraft() BorradorAlta {
 	return BorradorAlta{
 		NumeroSerie: "F-2027-0001", Fecha: "05-01-2027", Tipo: "F1",
 		Descripcion: "Servicios de enero", NIFCliente: "B44531218", NombreCliente: "ACME SL",
@@ -24,13 +24,13 @@ func borradorPrueba() BorradorAlta {
 }
 
 func TestSellarAltaPrimeraFactura(t *testing.T) {
-	ahora := time.Date(2027, 1, 5, 10, 0, 0, 0, zonaMadrid(t))
-	res, err := SellarAlta("B72877814", "Facturable Test SL", borradorPrueba(), sisPrueba, EstadoCadena{}, ahora)
+	ahora := time.Date(2027, 1, 5, 10, 0, 0, 0, madridTZ(t))
+	res, err := SellarAlta("B72877814", "Facturable Test SL", testDraft(), sisPrueba, EstadoCadena{}, ahora)
 	if err != nil {
 		t.Fatalf("SellarAlta() = %v", err)
 	}
 	if !res.EsPrimero || res.EnlaceHuella != "" {
-		t.Fatalf("debería ser el primer registro: %+v", res)
+		t.Fatalf("debería ser el primer chainRow: %+v", res)
 	}
 	if res.Cuota != "260.00" || res.Importe != "1760.00" {
 		t.Fatalf("totales = %s / %s, want 260.00 / 1760.00", res.Cuota, res.Importe)
@@ -46,14 +46,14 @@ func TestSellarAltaPrimeraFactura(t *testing.T) {
 }
 
 func TestSellarAltaEncadenaConAnterior(t *testing.T) {
-	primera, err := SellarAlta("B72877814", "Facturable Test SL", borradorPrueba(), sisPrueba, EstadoCadena{}, time.Now())
+	primera, err := SellarAlta("B72877814", "Facturable Test SL", testDraft(), sisPrueba, EstadoCadena{}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	segundaB := borradorPrueba()
+	segundaB := testDraft()
 	segundaB.NumeroSerie = "F-2027-0002"
 
-	cadena := EstadoCadena{Ultimo: &EnlaceTriple{Serie: primera.Serie, Fecha: primera.Fecha, Huella: primera.Huella}}
+	cadena := EstadoCadena{Last: &EnlaceTriple{Serie: primera.Serie, Fecha: primera.Fecha, Huella: primera.Huella}}
 	res, err := SellarAlta("B72877814", "Facturable Test SL", segundaB, sisPrueba, cadena, time.Now())
 	if err != nil {
 		t.Fatalf("SellarAlta() = %v", err)
@@ -67,7 +67,7 @@ func TestSellarAltaEncadenaConAnterior(t *testing.T) {
 }
 
 func TestSellarAltaRechazaCadenaRota(t *testing.T) {
-	primera, err := SellarAlta("B72877814", "Facturable Test SL", borradorPrueba(), sisPrueba, EstadoCadena{}, time.Now())
+	primera, err := SellarAlta("B72877814", "Facturable Test SL", testDraft(), sisPrueba, EstadoCadena{}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,27 +75,27 @@ func TestSellarAltaRechazaCadenaRota(t *testing.T) {
 	declarado := &EnlaceTriple{Serie: "F-2026-9999", Fecha: "31-12-2026", Huella: strings.Repeat("E", 64)}
 	real := &EnlaceTriple{Serie: "F-2026-9998", Fecha: "30-12-2026", Huella: strings.Repeat("D", 64)}
 	cadena := EstadoCadena{
-		Ultimo:             &EnlaceTriple{Serie: primera.Serie, Fecha: primera.Fecha, Huella: primera.Huella},
+		Last:               &EnlaceTriple{Serie: primera.Serie, Fecha: primera.Fecha, Huella: primera.Huella},
 		DeclaradoPorUltimo: declarado,
-		Anterior:           real,
+		Previous:           real,
 	}
-	if _, err := SellarAlta("B72877814", "Facturable Test SL", borradorPrueba(), sisPrueba, cadena, time.Now()); err == nil {
+	if _, err := SellarAlta("B72877814", "Facturable Test SL", testDraft(), sisPrueba, cadena, time.Now()); err == nil {
 		t.Fatal("SellarAlta() = nil, want cadena rota (declarado != real)")
 	}
 
 	// Caso válido: lo declarado coincide con el real.
 	cadenaOK := EstadoCadena{
-		Ultimo:             &EnlaceTriple{Serie: primera.Serie, Fecha: primera.Fecha, Huella: primera.Huella},
+		Last:               &EnlaceTriple{Serie: primera.Serie, Fecha: primera.Fecha, Huella: primera.Huella},
 		DeclaradoPorUltimo: real,
-		Anterior:           real,
+		Previous:           real,
 	}
-	if _, err := SellarAlta("B72877814", "Facturable Test SL", borradorPrueba(), sisPrueba, cadenaOK, time.Now()); err != nil {
+	if _, err := SellarAlta("B72877814", "Facturable Test SL", testDraft(), sisPrueba, cadenaOK, time.Now()); err != nil {
 		t.Fatalf("SellarAlta() con cadena válida = %v", err)
 	}
 }
 
 func TestSellarAltaErroresDato(t *testing.T) {
-	base := borradorPrueba()
+	base := testDraft()
 
 	b := base
 	b.NumeroSerie = ""
@@ -123,7 +123,7 @@ func TestSellarAltaErroresDato(t *testing.T) {
 	}
 }
 
-func zonaMadrid(t *testing.T) *time.Location {
+func madridTZ(t *testing.T) *time.Location {
 	t.Helper()
 	loc, err := time.LoadLocation("Europe/Madrid")
 	if err != nil {

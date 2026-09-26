@@ -1,7 +1,7 @@
-// Package licencias: api.go expone el servicio de licencias (PUT idempotente
-// con UUID de cliente, :check con la regla nunca-rehén). HTTP + persistencia
-// viven aquí como adaptadores; la lógica de firma/validez es la del paquete.
-package licencias
+// Package licencias: api.go serves the license API (idempotent PUT with
+// client UUID, never-hostage validity). HTTP and persistence live here as
+// adapters; signing/validity logic belongs to the package core.
+package licenses
 
 import (
 	"crypto/ed25519"
@@ -19,7 +19,7 @@ import (
 // Store de licencias (tabla unica, sqlite).
 type store struct{ db *sql.DB }
 
-func nuevaStore(db *sql.DB) (*store, error) {
+func newStore(db *sql.DB) (*store, error) {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS licencias(
 	  id TEXT PRIMARY KEY,
 	  plan TEXT NOT NULL,
@@ -36,9 +36,9 @@ func nuevaStore(db *sql.DB) (*store, error) {
 	return &store{db: db}, nil
 }
 
-// CargarOGenerarClave lee etc/licencias.ed25519 o crea el par (dev) y
+// LoadOrCreateKey lee etc/licencias.ed25519 o crea el par (dev) y
 // guarda la privada (0600); devuelve la privada y la pública.
-func CargarOGenerarClave(ruta string) (ed25519.PrivateKey, ed25519.PublicKey, error) {
+func LoadOrCreateKey(ruta string) (ed25519.PrivateKey, ed25519.PublicKey, error) {
 	if raw, err := os.ReadFile(ruta); err == nil && len(raw) == ed25519.PrivateKeySize {
 		priv := ed25519.PrivateKey(raw)
 		return priv, priv.Public().(ed25519.PublicKey), nil
@@ -57,16 +57,16 @@ func CargarOGenerarClave(ruta string) (ed25519.PrivateKey, ed25519.PublicKey, er
 	return priv, pub, nil
 }
 
-// API monta los endpoints de licencias en mux.
+// API holds the license service.
 type API struct {
 	store *store
 	priv  ed25519.PrivateKey
 	ahora func() time.Time
 }
 
-// NuevaAPI prepara el servicio de licencias sobre una base sql abierta.
+// NewAPI builds the license service on an open sql DB.
 func NuevaAPI(db *sql.DB, priv ed25519.PrivateKey) (*API, error) {
-	st, err := nuevaStore(db)
+	st, err := newStore(db)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func (a *API) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/licenses/{id}/validity", a.validity)
 }
 
-type peticionLicencia struct {
+type licenseRequest struct {
 	Plan        Plan     `json:"plan"`
 	NIFs        []string `json:"nifs"`
 	DiasValidez int      `json:"dias_validez"`
@@ -91,12 +91,12 @@ type peticionLicencia struct {
 
 func (a *API) put(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !esUUID(id) {
+	if !isUUID(id) {
 		problem(w, 400, "invalid license id: a client-provided UUID is required", r)
 		return
 	}
-	var req peticionLicencia
-	if err := json.NewDecoder(io1MB(r)).Decode(&req); err != nil {
+	var req licenseRequest
+	if err := json.NewDecoder(limitedBody(r)).Decode(&req); err != nil {
 		problem(w, 400, "unreadable body: "+err.Error(), r)
 		return
 	}
@@ -144,7 +144,7 @@ VALUES (?,?,?,?,?,?,?,?);`, id, string(req.Plan), marshalNIFs(req.NIFs),
 }
 
 func (a *API) get(w http.ResponseWriter, r *http.Request) {
-	lic, token, ok := a.porID(w, r)
+	lic, token, ok := a.findByID(w, r)
 	if !ok {
 		return
 	}
@@ -159,7 +159,7 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 // gracia; abrir/exportar jamás se bloquea (Gate del paquete). Sustantivo, no
 // acción: el verbo HTTP (GET) ya es la acción.
 func (a *API) validity(w http.ResponseWriter, r *http.Request) {
-	lic, _, ok := a.porID(w, r)
+	lic, _, ok := a.findByID(w, r)
 	if !ok {
 		return
 	}
@@ -176,7 +176,7 @@ func (a *API) validity(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"data": res})
 }
 
-func (a *API) porID(w http.ResponseWriter, r *http.Request) (License, string, bool) {
+func (a *API) findByID(w http.ResponseWriter, r *http.Request) (License, string, bool) {
 	id := r.PathValue("id")
 	var plan, nifsJSON, token string
 	var expires, issued string
@@ -198,8 +198,8 @@ func (a *API) porID(w http.ResponseWriter, r *http.Request) (License, string, bo
 	return NewLicense(id, Plan(plan), nifs, is, ex, grace), token, true
 }
 
-// esUUID accepts the canonical 8-4-4-4-12 hexadecimal form.
-func esUUID(id string) bool {
+// isUUID accepts the canonical 8-4-4-4-12 hexadecimal form.
+func isUUID(id string) bool {
 	if len(id) != 36 {
 		return false
 	}
@@ -223,11 +223,11 @@ func marshalNIFs(nifs []string) string {
 	return string(b)
 }
 
-func io1MB(r *http.Request) ioReader { return ioReader{r} }
+func limitedBody(r *http.Request) bodyReader { return bodyReader{r} }
 
-type ioReader struct{ r *http.Request }
+type bodyReader struct{ r *http.Request }
 
-func (i ioReader) Read(p []byte) (int, error) { return i.r.Body.Read(p) }
+func (i bodyReader) Read(p []byte) (int, error) { return i.r.Body.Read(p) }
 
 func problem(w http.ResponseWriter, status int, detail string, r *http.Request) {
 	w.Header().Set("Content-Type", "application/problem+json")

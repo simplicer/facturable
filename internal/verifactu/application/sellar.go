@@ -10,7 +10,7 @@ import (
 	"facturable/internal/verifactu/domain/xmlalta"
 )
 
-// SistemaLocal identifica el SIF en cada registro (art. 15 OM: productor,
+// SistemaLocal identifica el SIF en cada chainRow (art. 15 OM: productor,
 // IdSistemaInformatico de 2 caracteres, versión e instalación).
 type SistemaLocal struct {
 	NombreProductor, NIFProductor string
@@ -31,24 +31,24 @@ type DesgloseAlta struct {
 }
 
 // EstadoCadena es la foto del libro que el llamador saca del almacén:
-//   - Ultimo: identidad (serie/fecha/huella) del último registro, n-1.
+//   - Last: identidad (serie/fecha/huella) del último chainRow, n-1.
 //   - DeclaradoPorUltimo: el enlace que n-1 incrustó hacia n-2 (nil si n-1
 //     fue el primero). Es lo que permite detectar manipulaciones.
-//   - Anterior: identidad real de n-2 según el almacén (nil si no existe).
+//   - Previous: identidad real de n-2 según el almacén (nil si no existe).
 //
-// Ultimo nil = cadena vacía.
+// Last nil = cadena vacía.
 type EstadoCadena struct {
-	Ultimo             *EnlaceTriple
+	Last               *EnlaceTriple
 	DeclaradoPorUltimo *EnlaceTriple
-	Anterior           *EnlaceTriple
+	Previous           *EnlaceTriple
 }
 
-// EnlaceTriple identifica un registro: serie, fecha y huella.
+// EnlaceTriple identifica un chainRow: serie, fecha y huella.
 type EnlaceTriple struct{ Serie, Fecha, Huella string }
 
 // ResultadoSellar es todo lo que hay que persistir tras sellar.
 type ResultadoSellar struct {
-	XML string // sobre SOAP completo del registro (envío unitario)
+	XML string // sobre SOAP completo del chainRow (envío unitario)
 
 	NIF, Serie, Fecha, Tipo                string
 	Cuota, Importe, Generado, Huella       string
@@ -56,7 +56,7 @@ type ResultadoSellar struct {
 	EsPrimero                              bool
 }
 
-// SellarAlta convierte un borrador en registro de facturación encadenado
+// SellarAlta convierte un borrador en chainRow de facturación encadenado
 // con su XML de remisión. Verifica el salto n-1/n-2 antes de sellar
 // (FAQ AEAT de trazabilidad) y calcula totales por suma exacta en céntimos.
 func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal, cadena EstadoCadena, ahora time.Time) (*ResultadoSellar, error) {
@@ -81,11 +81,11 @@ func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal
 	cuotaCent, baseCent := 0, 0
 	lineas := make([]xmlalta.BreakdownLine, 0, len(b.Desgloses))
 	for _, d := range b.Desgloses {
-		base, err := enCentimos(d.Base)
+		base, err := toCents(d.Base)
 		if err != nil {
 			return nil, fmt.Errorf("base imponible de %s: %v", d.TipoImpositivo, err)
 		}
-		cuota, err := enCentimos(d.Cuota)
+		cuota, err := toCents(d.Cuota)
 		if err != nil {
 			return nil, fmt.Errorf("cuota de %s: %v", d.TipoImpositivo, err)
 		}
@@ -95,9 +95,9 @@ func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal
 			Tax:                    "01", // IVA
 			RegimeKey:              "01", // régimen general
 			OperationQualification: "S1", // sujeta y no exenta
-			TaxRate:                normalizaDecimal(d.TipoImpositivo),
-			TaxBase:                desdeCentimos(base),
-			TaxFee:                 desdeCentimos(cuota),
+			TaxRate:                normalizeDecimal(d.TipoImpositivo),
+			TaxBase:                fromCents(base),
+			TaxFee:                 fromCents(cuota),
 		})
 	}
 	if len(lineas) == 0 {
@@ -108,25 +108,25 @@ func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal
 	}
 
 	// Verificación del salto de cadena antes de generar la huella.
-	var huellaAnterior domain.Huella
+	var previousHuella domain.Huella
 	var encadenamiento xmlalta.Chaining
 	switch {
-	case cadena.Ultimo == nil:
+	case cadena.Last == nil:
 		encadenamiento = xmlalta.Chaining{FirstRecord: "S"}
 	default:
-		ult := tripleADominio(*cadena.Ultimo)
+		ult := toDomainLink(*cadena.Last)
 		var declarado, ant *domain.Enlace
 		if cadena.DeclaradoPorUltimo != nil {
-			declarado = tripleAEnlace(*cadena.DeclaradoPorUltimo)
+			declarado = toDomainEnlace(*cadena.DeclaradoPorUltimo)
 		}
-		if cadena.Anterior != nil {
-			ant = tripleAEnlace(*cadena.Anterior)
+		if cadena.Previous != nil {
+			ant = toDomainEnlace(*cadena.Previous)
 		}
 		vigente := domain.RegistroVigente{Enlace: *ult, Referencia: declarado}
 		if err := domain.VerificarSalto(vigente, ant); err != nil {
 			return nil, fmt.Errorf("no se puede sellar: %v", err)
 		}
-		huellaAnterior = ult.Huella
+		previousHuella = ult.Huella
 		encadenamiento = xmlalta.Chaining{PreviousRecord: &xmlalta.PreviousRecord{
 			IssuerID:       nif.Value(),
 			Number:         ult.Serie.Value(),
@@ -138,9 +138,9 @@ func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal
 	generado := domain.NewFechaHoraHusoFromTime(ahora)
 	huella, err := domain.HuellaRegistroAlta(domain.RegistroAltaHuella{
 		Emisor: nif, Serie: serie, Fecha: fecha, Tipo: tipo,
-		Cuota:    mustImporteTotal(desdeCentimos(cuotaCent)),
-		Importe:  mustImporteTotal(desdeCentimos(baseCent + cuotaCent)),
-		Generado: generado, Anterior: huellaAnterior,
+		Cuota:    mustTotal(fromCents(cuotaCent)),
+		Importe:  mustTotal(fromCents(baseCent + cuotaCent)),
+		Generado: generado, Previous: previousHuella,
 	})
 	if err != nil {
 		return nil, err
@@ -158,8 +158,8 @@ func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal
 		reg.Recipients = []xmlalta.Recipient{{Name: b.NombreCliente, TaxID: b.NIFCliente}}
 	}
 	reg.Breakdown = lineas
-	reg.TotalTax = desdeCentimos(cuotaCent)
-	reg.TotalAmount = desdeCentimos(baseCent + cuotaCent)
+	reg.TotalTax = fromCents(cuotaCent)
+	reg.TotalAmount = fromCents(baseCent + cuotaCent)
 	reg.Chaining = &encadenamiento
 	reg.System = xmlalta.SoftwareSystem{
 		Name: sis.NombreProductor, TaxID: sis.NIFProductor,
@@ -170,7 +170,7 @@ func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal
 	reg.GeneratedAt = generado.ISO8601()
 	reg.Fingerprint = huella.Value()
 	if err := reg.Validate(); err != nil {
-		return nil, fmt.Errorf("el registro no cumple el diseño de la AEAT: %v", err)
+		return nil, fmt.Errorf("el chainRow no cumple el diseño de la AEAT: %v", err)
 	}
 
 	sub := xmlalta.NewSubmission(xmlalta.Issuer{Name: emisorNombre, TaxID: nif.Value()}, reg)
@@ -182,28 +182,28 @@ func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal
 	res := &ResultadoSellar{
 		XML: xmlStr, NIF: nif.Value(), Serie: serie.Value(),
 		Fecha: fecha.Fecha(), Tipo: tipo.String(),
-		Cuota: desdeCentimos(cuotaCent), Importe: desdeCentimos(baseCent + cuotaCent),
-		Generado: generado.ISO8601(), Huella: huella.Value(), EsPrimero: cadena.Ultimo == nil,
+		Cuota: fromCents(cuotaCent), Importe: fromCents(baseCent + cuotaCent),
+		Generado: generado.ISO8601(), Huella: huella.Value(), EsPrimero: cadena.Last == nil,
 	}
 	if !res.EsPrimero {
-		res.EnlaceSerie = cadena.Ultimo.Serie
-		res.EnlaceFecha = cadena.Ultimo.Fecha
-		res.EnlaceHuella = cadena.Ultimo.Huella
+		res.EnlaceSerie = cadena.Last.Serie
+		res.EnlaceFecha = cadena.Last.Fecha
+		res.EnlaceHuella = cadena.Last.Huella
 	}
 	return res, nil
 }
 
-func tripleADominio(t EnlaceTriple) *domain.Enlace {
+func toDomainLink(t EnlaceTriple) *domain.Enlace {
 	return &domain.Enlace{
-		Serie:  mustSerieVO(t.Serie),
-		Fecha:  mustFechaVO(t.Fecha),
-		Huella: mustHuellaVO(t.Huella),
+		Serie:  mustSerial(t.Serie),
+		Fecha:  mustDate(t.Fecha),
+		Huella: mustHuella(t.Huella),
 	}
 }
 
-func tripleAEnlace(t EnlaceTriple) *domain.Enlace { return tripleADominio(t) }
+func toDomainEnlace(t EnlaceTriple) *domain.Enlace { return toDomainLink(t) }
 
-func mustSerieVO(raw string) domain.SerieNumero {
+func mustSerial(raw string) domain.SerieNumero {
 	s, err := domain.NewSerieNumero(raw)
 	if err != nil {
 		panic("serie inválida ya validada: " + err.Error())
@@ -211,7 +211,7 @@ func mustSerieVO(raw string) domain.SerieNumero {
 	return s
 }
 
-func mustFechaVO(raw string) domain.FechaExpedicion {
+func mustDate(raw string) domain.FechaExpedicion {
 	f, err := domain.NewFechaExpedicion(raw)
 	if err != nil {
 		panic("fecha inválida ya validada: " + err.Error())
@@ -219,7 +219,7 @@ func mustFechaVO(raw string) domain.FechaExpedicion {
 	return f
 }
 
-func mustHuellaVO(raw string) domain.Huella {
+func mustHuella(raw string) domain.Huella {
 	h, err := domain.NewHuella(raw)
 	if err != nil {
 		panic("huella inválida: " + err.Error())
@@ -227,7 +227,7 @@ func mustHuellaVO(raw string) domain.Huella {
 	return h
 }
 
-func mustImporteTotal(raw string) domain.ImporteTotal {
+func mustTotal(raw string) domain.ImporteTotal {
 	v, err := domain.NewImporteTotal(raw)
 	if err != nil {
 		panic("importe inválido: " + err.Error())
@@ -235,8 +235,8 @@ func mustImporteTotal(raw string) domain.ImporteTotal {
 	return v
 }
 
-// enCentimos parsea "123.45" (2 decimales, punto o coma) a céntimos exactos.
-func enCentimos(raw string) (int, error) {
+// toCents parsea "123.45" (2 decimales, punto o coma) a céntimos exactos.
+func toCents(raw string) (int, error) {
 	s := strings.Replace(strings.TrimSpace(raw), ",", ".", 1)
 	partes := strings.Split(s, ".")
 	if len(partes) > 2 || partes[0] == "" {
@@ -271,7 +271,7 @@ func enCentimos(raw string) (int, error) {
 	return total, nil
 }
 
-func desdeCentimos(c int) string {
+func fromCents(c int) string {
 	signo := ""
 	if c < 0 {
 		signo, c = "-", -c
@@ -279,6 +279,6 @@ func desdeCentimos(c int) string {
 	return fmt.Sprintf("%s%d.%02d", signo, c/100, c%100)
 }
 
-func normalizaDecimal(raw string) string {
+func normalizeDecimal(raw string) string {
 	return strings.Replace(strings.TrimSpace(raw), ",", ".", 1)
 }

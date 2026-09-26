@@ -74,7 +74,7 @@ func (s Submission) Validate() error {
 		errs = append(errs, errors.New("el NIF del obligado de emisión es obligatorio"))
 	}
 	if len(s.Records) == 0 {
-		errs = append(errs, errors.New("la remisión debe incluir al menos un registro de facturación"))
+		errs = append(errs, errors.New("la remisión debe incluir al menos un chainRow de facturación"))
 	}
 	for i, record := range s.Records {
 		switch r := record.(type) {
@@ -92,7 +92,7 @@ func withRecord(err error, position int) []error {
 	if err == nil {
 		return nil
 	}
-	prefix := fmt.Sprintf("registro %d: ", position+1)
+	prefix := fmt.Sprintf("chainRow %d: ", position+1)
 	lines := strings.Split(err.Error(), "\n")
 	out := make([]error, 0, len(lines))
 	for _, line := range lines {
@@ -113,7 +113,7 @@ func (s Submission) XML() (string, error) {
 		case CancellationRecord:
 			records = append(records, registroFactura{Anulacion: &r})
 		default:
-			return "", fmt.Errorf("tipo de registro de facturación no soportado: %T", record)
+			return "", fmt.Errorf("tipo de chainRow de facturación no soportado: %T", record)
 		}
 	}
 

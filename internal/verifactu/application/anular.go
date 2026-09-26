@@ -8,8 +8,8 @@ import (
 	"facturable/internal/verifactu/domain/xmlalta"
 )
 
-// SellarAnulacion genera el registro de anulación de una factura emitida y
-// lo encadena como cualquier otro registro (FAQ AEAT: altas y anulaciones
+// SellarAnulacion genera el chainRow de anulación de una factura emitida y
+// lo encadena como cualquier otro chainRow (FAQ AEAT: altas y anulaciones
 // comparten la MISMA cadena, en orden de generación).
 func SellarAnulacion(emisorNIF string, serie, fecha string, sis SistemaLocal, cadena EstadoCadena, ahora time.Time) (*ResultadoSellar, error) {
 	nif, err := domain.NewNIF(emisorNIF)
@@ -24,18 +24,18 @@ func SellarAnulacion(emisorNIF string, serie, fecha string, sis SistemaLocal, ca
 	if err != nil {
 		return nil, fmt.Errorf("fecha de la factura a anular: %v", err)
 	}
-	if cadena.Ultimo == nil {
+	if cadena.Last == nil {
 		return nil, fmt.Errorf("no se puede anular %s: el libro no tiene registros de esa empresa", serie)
 	}
 
 	// verificación del salto n-1/n-2 (idéntica a SellarAlta)
-	ult := tripleADominio(*cadena.Ultimo)
+	ult := toDomainLink(*cadena.Last)
 	var declarado, ant *domain.Enlace
 	if cadena.DeclaradoPorUltimo != nil {
-		declarado = tripleAEnlace(*cadena.DeclaradoPorUltimo)
+		declarado = toDomainEnlace(*cadena.DeclaradoPorUltimo)
 	}
-	if cadena.Anterior != nil {
-		ant = tripleAEnlace(*cadena.Anterior)
+	if cadena.Previous != nil {
+		ant = toDomainEnlace(*cadena.Previous)
 	}
 	if err := domain.VerificarSalto(domain.RegistroVigente{Enlace: *ult, Referencia: declarado}, ant); err != nil {
 		return nil, fmt.Errorf("no se puede anular: %v", err)
@@ -43,7 +43,7 @@ func SellarAnulacion(emisorNIF string, serie, fecha string, sis SistemaLocal, ca
 
 	generado := domain.NewFechaHoraHusoFromTime(ahora)
 	huella, err := domain.HuellaRegistroAnulacion(domain.RegistroAnulacionHuella{
-		Emisor: nif, Serie: serieVO, Fecha: fechaVO, Generado: generado, Anterior: ult.Huella,
+		Emisor: nif, Serie: serieVO, Fecha: fechaVO, Generado: generado, Previous: ult.Huella,
 	})
 	if err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func SellarAnulacion(emisorNIF string, serie, fecha string, sis SistemaLocal, ca
 	reg.GeneratedAt = generado.ISO8601()
 	reg.Fingerprint = huella.Value()
 	if err := reg.Validate(); err != nil {
-		return nil, fmt.Errorf("el registro de anulación no cumple el diseño AEAT: %v", err)
+		return nil, fmt.Errorf("el chainRow de anulación no cumple el diseño AEAT: %v", err)
 	}
 
 	sub := xmlalta.NewSubmission(xmlalta.Issuer{Name: sis.NombreProductor, TaxID: nif.Value()}, reg)
@@ -79,7 +79,7 @@ func SellarAnulacion(emisorNIF string, serie, fecha string, sis SistemaLocal, ca
 		XML: xmlStr, NIF: nif.Value(), Serie: serieVO.Value(),
 		Fecha: fechaVO.Fecha(), Tipo: "ANULACION",
 		Generado: generado.ISO8601(), Huella: huella.Value(),
-		EnlaceSerie: cadena.Ultimo.Serie, EnlaceFecha: cadena.Ultimo.Fecha,
-		EnlaceHuella: cadena.Ultimo.Huella,
+		EnlaceSerie: cadena.Last.Serie, EnlaceFecha: cadena.Last.Fecha,
+		EnlaceHuella: cadena.Last.Huella,
 	}, nil
 }

@@ -7,7 +7,7 @@ import (
 // Referencias generadas con la librería de referencia `qrcode` de Python
 // (nivel M), mismo contenido: validan flujo de bits, Reed-Solomon y
 // entrelazado byte a byte.
-var casosGolden = map[string][]byte{}
+var goldenCases = map[string][]byte{}
 
 func loadGolden(t *testing.T) map[string][]byte {
 	t.Helper()

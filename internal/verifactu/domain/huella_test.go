@@ -14,7 +14,7 @@ const (
 	vectorCaso1    = "3C464DAF61ACB827C65FDA19F352A4E3BDC2C640E9E9FC4CC058073F38F12F60"
 	vectorCaso2    = "F7B94CFD8924EDFF273501B01EE5153E4CE8F259766F88CF6ACB8935802A2B97"
 	vectorCaso3    = "177547C0D57AC74748561D054A9CEC14B4C4EA23D1BEFD6F2E69E3A388F90C68"
-	huellaAnterior = "8C8DCEFB120522E0C71BC19902F44D5334FF6C98E74F0E3AC1D1E5A30C2EA836"
+	previousHuella = "8C8DCEFB120522E0C71BC19902F44D5334FF6C98E74F0E3AC1D1E5A30C2EA836"
 )
 
 func altaFixture(t *testing.T) RegistroAltaHuella {
@@ -27,7 +27,7 @@ func altaFixture(t *testing.T) RegistroAltaHuella {
 		Cuota:    mustImporte(t, "21.4"),
 		Importe:  mustImporte(t, "131.4"),
 		Generado: mustHuso(t, "2024-11-04T12:36:39+01:00"),
-		Anterior: mustHuella(t, huellaAnterior),
+		Previous: mustHuella(t, previousHuella),
 	}
 }
 
@@ -76,7 +76,7 @@ func TestHuellaRegistroAltaOfficialCaso2(t *testing.T) {
 		Cuota:    mustImporte(t, "12.35"),
 		Importe:  mustImporte(t, "123.45"),
 		Generado: mustHuso(t, "2024-01-01T19:20:35+01:00"),
-		Anterior: mustHuella(t, vectorCaso1),
+		Previous: mustHuella(t, vectorCaso1),
 	}
 	got, err := HuellaRegistroAlta(input)
 	if err != nil {
@@ -95,7 +95,7 @@ func TestHuellaRegistroAnulacionOfficialCaso3(t *testing.T) {
 		Serie:    mustSerie(t, "12345679/G34"),
 		Fecha:    mustFecha(t, "01-01-2024"),
 		Generado: mustHuso(t, "2024-01-01T19:20:40+01:00"),
-		Anterior: mustHuella(t, vectorCaso2),
+		Previous: mustHuella(t, vectorCaso2),
 	}
 	got, err := HuellaRegistroAnulacion(input)
 	if err != nil {
@@ -116,7 +116,7 @@ func TestAltaHuellaInputExactString(t *testing.T) {
 		"&TipoFactura=F1" +
 		"&CuotaTotal=21.4" +
 		"&ImporteTotal=131.4" +
-		"&Huella=" + huellaAnterior +
+		"&Huella=" + previousHuella +
 		"&FechaHoraHusoGenRegistro=2024-11-04T12:36:39+01:00"
 	got := altaHuellaInput(altaFixture(t))
 	if got != want {
@@ -133,7 +133,7 @@ func TestAnulacionHuellaInputExactString(t *testing.T) {
 		Serie:    mustSerie(t, "12345679/G34"),
 		Fecha:    mustFecha(t, "01-01-2024"),
 		Generado: mustHuso(t, "2024-01-01T19:20:40+01:00"),
-		Anterior: mustHuella(t, vectorCaso2),
+		Previous: mustHuella(t, vectorCaso2),
 	}
 	want := "IDEmisorFacturaAnulada=89890001K" +
 		"&NumSerieFacturaAnulada=12345679/G34" +
@@ -217,8 +217,8 @@ func TestHuellaIsSensitiveToEveryField(t *testing.T) {
 		{name: "cuota", mutate: func(r *RegistroAltaHuella) { r.Cuota = mustImporte(t, "21.5") }},
 		{name: "importe", mutate: func(r *RegistroAltaHuella) { r.Importe = mustImporte(t, "131.5") }},
 		{name: "generado", mutate: func(r *RegistroAltaHuella) { r.Generado = mustHuso(t, "2024-11-04T12:36:40+01:00") }},
-		{name: "anterior", mutate: func(r *RegistroAltaHuella) { r.Anterior = mustHuella(t, vectorCaso1) }},
-		{name: "anterior cleared", mutate: func(r *RegistroAltaHuella) { r.Anterior = Huella{} }},
+		{name: "anterior", mutate: func(r *RegistroAltaHuella) { r.Previous = mustHuella(t, vectorCaso1) }},
+		{name: "anterior cleared", mutate: func(r *RegistroAltaHuella) { r.Previous = Huella{} }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -243,7 +243,7 @@ func TestAnulacionHuellaSensitiveToFields(t *testing.T) {
 		Serie:    mustSerie(t, "12345679/G34"),
 		Fecha:    mustFecha(t, "01-01-2024"),
 		Generado: mustHuso(t, "2024-01-01T19:20:40+01:00"),
-		Anterior: mustHuella(t, vectorCaso2),
+		Previous: mustHuella(t, vectorCaso2),
 	}
 	baseline, err := HuellaRegistroAnulacion(base)
 	if err != nil {
@@ -254,7 +254,7 @@ func TestAnulacionHuellaSensitiveToFields(t *testing.T) {
 		"serie":    func(r *RegistroAnulacionHuella) { r.Serie = mustSerie(t, "12345678/G33") },
 		"fecha":    func(r *RegistroAnulacionHuella) { r.Fecha = mustFecha(t, "02-01-2024") },
 		"generado": func(r *RegistroAnulacionHuella) { r.Generado = mustHuso(t, "2024-01-01T19:20:41+01:00") },
-		"anterior": func(r *RegistroAnulacionHuella) { r.Anterior = Huella{} },
+		"anterior": func(r *RegistroAnulacionHuella) { r.Previous = Huella{} },
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
@@ -289,7 +289,7 @@ func TestHuellaChainOfN(t *testing.T) {
 			Generado: mustHuso(t, mustInstant(i)),
 		}
 		if i > 0 {
-			record.Anterior = huellas[i-1]
+			record.Previous = huellas[i-1]
 		}
 		huella, err := HuellaRegistroAlta(record)
 		if err != nil {
@@ -318,7 +318,7 @@ func TestHuellaChainOfN(t *testing.T) {
 	var tamperedHuellas []Huella
 	for i := 0; i < total; i++ {
 		if i > 0 {
-			tampered[i].Anterior = tamperedHuellas[i-1]
+			tampered[i].Previous = tamperedHuellas[i-1]
 		}
 		got, err := HuellaRegistroAlta(tampered[i])
 		if err != nil {
@@ -337,7 +337,7 @@ func TestHuellaChainOfN(t *testing.T) {
 		Serie:    mustSerie(t, "TEST-2024-001"),
 		Fecha:    mustFecha(t, "01-01-2024"),
 		Generado: mustHuso(t, mustInstant(total)),
-		Anterior: huellas[total-1],
+		Previous: huellas[total-1],
 	}
 	chainWithAnulacion, err := HuellaRegistroAnulacion(anulacion)
 	if err != nil {

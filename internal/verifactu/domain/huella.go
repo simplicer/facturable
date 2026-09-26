@@ -55,7 +55,7 @@ type RegistroAltaHuella struct {
 	Cuota    CuotaTotal      // CuotaTotal
 	Importe  ImporteTotal    // ImporteTotal
 	Generado FechaHoraHuso   // FechaHoraHusoGenRegistro
-	Anterior Huella          // Encadenamiento/RegistroAnterior/Huella (zero for the first record)
+	Previous Huella          // Encadenamiento/RegistroAnterior/Huella (zero for the first record)
 }
 
 // HuellaRegistroAlta computes the fingerprint of a billing registration
@@ -94,7 +94,7 @@ type RegistroAnulacionHuella struct {
 	Serie    SerieNumero     // NumSerieFacturaAnulada
 	Fecha    FechaExpedicion // FechaExpedicionFacturaAnulada
 	Generado FechaHoraHuso   // FechaHoraHusoGenRegistro
-	Anterior Huella          // Encadenamiento/RegistroAnterior/Huella (zero for the first record)
+	Previous Huella          // Encadenamiento/RegistroAnterior/Huella (zero for the first record)
 }
 
 // HuellaRegistroAnulacion computes the fingerprint of a cancellation record.
@@ -125,7 +125,7 @@ func altaHuellaInput(record RegistroAltaHuella) string {
 		"TipoFactura=" + record.Tipo.String(),
 		"CuotaTotal=" + record.Cuota.WithoutTrailingZeros(),
 		"ImporteTotal=" + record.Importe.WithoutTrailingZeros(),
-		"Huella=" + record.Anterior.Value(),
+		"Huella=" + record.Previous.Value(),
 		"FechaHoraHusoGenRegistro=" + record.Generado.ISO8601(),
 	}, "&")
 }
@@ -137,7 +137,7 @@ func anulacionHuellaInput(record RegistroAnulacionHuella) string {
 		"IDEmisorFacturaAnulada=" + record.Emisor.Value(),
 		"NumSerieFacturaAnulada=" + record.Serie.Value(),
 		"FechaExpedicionFacturaAnulada=" + record.Fecha.Fecha(),
-		"Huella=" + record.Anterior.Value(),
+		"Huella=" + record.Previous.Value(),
 		"FechaHoraHusoGenRegistro=" + record.Generado.ISO8601(),
 	}, "&")
 }

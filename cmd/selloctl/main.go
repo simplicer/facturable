@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"facturable/internal/licencias"
+	"facturable/internal/licenses"
 )
 
 func main() {
@@ -21,12 +21,12 @@ func main() {
 		fs := flag.NewFlagSet("claves", flag.ExitOnError)
 		dir := fs.String("dir", "etc", "directorio de configuración")
 		_ = fs.Parse(os.Args[2:])
-		priv, pub, err := licencias.CargarOGenerarClave(*dir + "/licencias.ed25519")
+		priv, pub, err := licenses.LoadOrCreateKey(*dir + "/licenses.ed25519")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
-		fmt.Printf("clave privada: %s/licencias.ed25519\nclave pública:  %s/licencias.ed25519.pub (%x)\n", *dir, *dir, pub)
+		fmt.Printf("clave privada: %s/licenses.ed25519\nclave pública:  %s/licenses.ed25519.pub (%x)\n", *dir, *dir, pub)
 		_ = priv
 	default:
 		fmt.Println("subcomando desconocido:", os.Args[1])

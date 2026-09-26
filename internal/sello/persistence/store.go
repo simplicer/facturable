@@ -1,8 +1,8 @@
-// Package persistencia guarda el libro de registros de facturación del
-// agente local en SQLite. Los registros fiscales son INMUTABLES (triggers
-// que abortan UPDATE/DELETE, exigencia de integridad del RRSIF); el estado
-// de remisión vive en un log append-only de intentos.
-package persistencia
+// Package persistence keeps the agent billing-record ledger in SQLite.
+// Fiscal records are IMMUTABLE (triggers abort UPDATE/DELETE, the RRSIF
+// integrity requirement); submission state lives in an append-only log of
+// attempts.
+package persistence
 
 import (
 	"database/sql"
@@ -12,10 +12,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Store es el almacén local del SIF.
+// Store is the SIF local ledger.
 type Store struct{ db *sql.DB }
 
-// Abrir inicializa (o reutiliza) la base de datos en path.
+// Open initializes (or reuses) the database at path.
 func Abrir(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 	if err != nil {
@@ -32,8 +32,8 @@ func Abrir(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// Checkpoint vuelca el WAL al fichero principal (necesario antes de copiar
-// el fichero de la base de datos, p.ej. para un backup).
+// Checkpoint flushes the WAL into the main file (required before copying
+// the database file, e.g. for a backup).
 func (s *Store) Checkpoint() error {
 	_, err := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
 	return err
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS registros(
   xml TEXT NOT NULL,
   creado_en TEXT NOT NULL
 );
--- Integridad RRSIF: un registro de facturación jamás se modifica ni borra.
+-- Integridad RRSIF: un chainRow de facturación jamás se modifica ni borra.
 CREATE TRIGGER IF NOT EXISTS registros_inmutables_update
 BEFORE UPDATE ON registros
 BEGIN SELECT RAISE(ABORT, 'los registros de facturación son inmutables'); END;
@@ -84,15 +84,15 @@ CREATE INDEX IF NOT EXISTS idx_registros_orden ON registros(nif, id);
 	return err
 }
 
-// RegistroGuardado es un registro listo para sellar en el libro.
-type RegistroGuardado struct {
+// StoredRecord es un chainRow listo para sellar en el libro.
+type StoredRecord struct {
 	NIF, Serie, Fecha, Tipo, Generado      string
 	Cuota, Importe, Huella, XML            string
 	EnlaceSerie, EnlaceFecha, EnlaceHuella string // vacíos si es el primero
 }
 
-// Guardar añade un registro al libro (append-only).
-func (s *Store) Guardar(r RegistroGuardado) (int64, error) {
+// Append añade un chainRow al libro (append-only).
+func (s *Store) Append(r StoredRecord) (int64, error) {
 	res, err := s.db.Exec(`INSERT INTO registros
 (nif, serie, fecha, tipo, generado, cuota, importe, huella, enlace_serie, enlace_fecha, enlace_huella, xml, creado_en)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);`,
@@ -100,14 +100,14 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);`,
 		nullIfEmpty(r.EnlaceSerie), nullIfEmpty(r.EnlaceFecha), nullIfEmpty(r.EnlaceHuella),
 		r.XML, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
-		return 0, fmt.Errorf("no se pudo guardar el registro: %w", err)
+		return 0, fmt.Errorf("no se pudo storeRow el chainRow: %w", err)
 	}
 	return res.LastInsertId()
 }
 
-// Ultimo devuelve identidad y enlace del último registro de un obligado.
+// Last devuelve identidad y enlace del último chainRow de un obligado.
 // ok=false cuando la cadena aún no tiene registros.
-func (s *Store) Ultimo(nif string) (serie, fecha, huella, enlSerie, enlFecha, enlHuella string, ok bool, err error) {
+func (s *Store) Last(nif string) (serie, fecha, huella, enlSerie, enlFecha, enlHuella string, ok bool, err error) {
 	row := s.db.QueryRow(`SELECT serie, fecha, huella, enlace_serie, enlace_fecha, enlace_huella
 FROM registros WHERE nif=? ORDER BY id DESC LIMIT 1;`, nif)
 	var es, ef, eh sql.NullString
@@ -115,35 +115,35 @@ FROM registros WHERE nif=? ORDER BY id DESC LIMIT 1;`, nif)
 		if err == sql.ErrNoRows {
 			return "", "", "", "", "", "", false, nil
 		}
-		return "", "", "", "", "", "", false, fmt.Errorf("no se pudo leer el último registro: %w", err)
+		return "", "", "", "", "", "", false, fmt.Errorf("no se pudo leer el último chainRow: %w", err)
 	}
 	return serie, fecha, huella, es.String, ef.String, eh.String, true, nil
 }
 
-// Anterior devuelve serie/fecha/huella del penúltimo registro (n-2) de un
-// obligado; ok=false cuando la cadena tiene un solo registro o ninguno.
+// Previous devuelve serie/fecha/huella del penúltimo chainRow (n-2) de un
+// obligado; ok=false cuando la cadena tiene un solo chainRow o ninguno.
 // Es la pieza que alimenta domain.VerificarSalto antes de sellar.
-func (s *Store) Anterior(nif string) (serie, fecha, huella string, ok bool, err error) {
+func (s *Store) Previous(nif string) (serie, fecha, huella string, ok bool, err error) {
 	row := s.db.QueryRow(`SELECT serie, fecha, huella
 FROM registros WHERE nif=? ORDER BY id DESC LIMIT 1 OFFSET 1;`, nif)
 	if err := row.Scan(&serie, &fecha, &huella); err != nil {
 		if err == sql.ErrNoRows {
 			return "", "", "", false, nil
 		}
-		return "", "", "", false, fmt.Errorf("no se pudo leer el registro anterior: %w", err)
+		return "", "", "", false, fmt.Errorf("no se pudo leer el chainRow anterior: %w", err)
 	}
 	return serie, fecha, huella, true, nil
 }
 
-// Remisión
-type RemisionGuardada struct {
+// Submission
+type StoredSubmission struct {
 	RegistroID           int64
 	Estado               string // correcto|aceptado_errores|rechazado
 	CSV, Codigo, Detalle string
 }
 
-// RegistrarRemision añade un intento al log.
-func (s *Store) RegistrarRemision(r RemisionGuardada) error {
+// RecordSubmission añade un intento al log.
+func (s *Store) RecordSubmission(r StoredSubmission) error {
 	var intento int
 	if err := s.db.QueryRow(`SELECT COALESCE(MAX(intento),0)+1 FROM remisiones WHERE registro_id=?;`, r.RegistroID).Scan(&intento); err != nil {
 		return fmt.Errorf("no se pudo numerar el intento: %w", err)
@@ -154,18 +154,18 @@ func (s *Store) RegistrarRemision(r RemisionGuardada) error {
 	return err
 }
 
-// Pendiente es un registro esperando remisión.
-type Pendiente struct {
+// PendingRecord es un chainRow esperando remisión.
+type PendingRecord struct {
 	ID    int64
 	Serie string
 	Fecha string
 	XML   string
 }
 
-// Pendientes devuelve los registros aún sin remitir (sin intento válido).
+// Pending devuelve los registros aún sin remitir (sin intento válido).
 // Los rechazos no reintentables requieren subsanación manual: no se
 // reenvían solos.
-func (s *Store) Pendientes(nif string, limite int) ([]Pendiente, error) {
+func (s *Store) Pending(nif string, limite int) ([]PendingRecord, error) {
 	rows, err := s.db.Query(`
 SELECT r.id, r.serie, r.fecha, r.xml
 FROM registros r
@@ -178,9 +178,9 @@ ORDER BY r.id LIMIT ?;`, nif, limite)
 		return nil, fmt.Errorf("no se pudo leer pendientes: %w", err)
 	}
 	defer rows.Close()
-	var out []Pendiente
+	var out []PendingRecord
 	for rows.Next() {
-		var p Pendiente
+		var p PendingRecord
 		if err := rows.Scan(&p.ID, &p.Serie, &p.Fecha, &p.XML); err != nil {
 			return nil, err
 		}
@@ -189,30 +189,30 @@ ORDER BY r.id LIMIT ?;`, nif, limite)
 	return out, rows.Err()
 }
 
-// PorID devuelve la fila del libro de un registro concreto.
-func (s *Store) PorID(id int64) (FilaListado, bool, error) {
-	filas, err := s.Listado("", 0, 1_000_000_000, 1_000_000)
+// ByID devuelve la fila del libro de un chainRow concreto.
+func (s *Store) ByID(id int64) (LedgerRow, bool, error) {
+	filas, err := s.Ledger("", 0, 1_000_000_000, 1_000_000)
 	if err != nil {
-		return FilaListado{}, false, err
+		return LedgerRow{}, false, err
 	}
 	for _, f := range filas {
 		if f.ID == id {
 			return f, true, nil
 		}
 	}
-	return FilaListado{}, false, nil
+	return LedgerRow{}, false, nil
 }
 
-// RegistroCadena es todo lo necesario para verificar la cadena completa.
-type RegistroCadena struct {
+// ChainRecord es todo lo necesario para verificar la cadena completa.
+type ChainRecord struct {
 	ID                                     int64
 	Serie, Fecha, Tipo, Generado           string
 	Cuota, Importe, Huella                 string
 	EnlaceSerie, EnlaceFecha, EnlaceHuella string
 }
 
-// CadenaCompleta devuelve los registros de un obligado en orden de sellado.
-func (s *Store) CadenaCompleta(nif string) ([]RegistroCadena, error) {
+// FullChain devuelve los registros de un obligado en orden de sellado.
+func (s *Store) FullChain(nif string) ([]ChainRecord, error) {
 	rows, err := s.db.Query(`
 SELECT id, serie, fecha, tipo, generado, cuota, importe, huella,
        COALESCE(enlace_serie,''), COALESCE(enlace_fecha,''), COALESCE(enlace_huella,'')
@@ -221,9 +221,9 @@ FROM registros WHERE nif=? ORDER BY id;`, nif)
 		return nil, fmt.Errorf("no se pudo leer la cadena: %w", err)
 	}
 	defer rows.Close()
-	var out []RegistroCadena
+	var out []ChainRecord
 	for rows.Next() {
-		var r RegistroCadena
+		var r ChainRecord
 		if err := rows.Scan(&r.ID, &r.Serie, &r.Fecha, &r.Tipo, &r.Generado,
 			&r.Cuota, &r.Importe, &r.Huella, &r.EnlaceSerie, &r.EnlaceFecha, &r.EnlaceHuella); err != nil {
 			return nil, err
@@ -233,8 +233,8 @@ FROM registros WHERE nif=? ORDER BY id;`, nif)
 	return out, rows.Err()
 }
 
-// FilaListado es la vista del libro para la UI y la exportación.
-type FilaListado struct {
+// LedgerRow es la vista del libro para la UI y la exportación.
+type LedgerRow struct {
 	ID                      int64
 	NIF, Serie, Fecha, Tipo string
 	Cuota, Importe, Huella  string
@@ -243,8 +243,8 @@ type FilaListado struct {
 	Remitido                string
 }
 
-// Listado devuelve el libro ordenado por inserción con el último estado.
-func (s *Store) Listado(nif string, desde, hasta int64, limite int) ([]FilaListado, error) {
+// Ledger devuelve el libro ordenado por inserción con el último estado.
+func (s *Store) Ledger(nif string, desde, hasta int64, limite int) ([]LedgerRow, error) {
 	rows, err := s.db.Query(`
 SELECT r.id, r.nif, r.serie, r.fecha, r.tipo, r.cuota, r.importe, r.huella,
        COALESCE(e.estado,'pendiente'),
@@ -261,9 +261,9 @@ ORDER BY r.id LIMIT ?;`, nif, nif, desde, hasta, limite)
 		return nil, fmt.Errorf("no se pudo leer el libro: %w", err)
 	}
 	defer rows.Close()
-	var out []FilaListado
+	var out []LedgerRow
 	for rows.Next() {
-		var f FilaListado
+		var f LedgerRow
 		if err := rows.Scan(&f.ID, &f.NIF, &f.Serie, &f.Fecha, &f.Tipo, &f.Cuota, &f.Importe, &f.Huella, &f.Estado, &f.CSV, &f.Remitido); err != nil {
 			return nil, err
 		}

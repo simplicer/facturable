@@ -32,19 +32,19 @@ func VerificarSalto(ultimo RegistroVigente, n2 *Enlace) error {
 	if ultimo.Referencia == nil {
 		if n2 != nil {
 			return fmt.Errorf(
-				"la cadena está rota: el último registro %s declara ser el primero pero el almacén conoce un registro anterior (%s)",
+				"la cadena está rota: el último chainRow %s declara ser el primero pero el almacén conoce un chainRow anterior (%s)",
 				ultimo.Serie.Value(), n2.Serie.Value())
 		}
 		return nil
 	}
 	if n2 == nil {
 		return fmt.Errorf(
-			"la cadena está rota: el último registro %s referencia a %s pero el almacén no conserva ese registro anterior",
+			"la cadena está rota: el último chainRow %s referencia a %s pero el almacén no conserva ese chainRow anterior",
 			ultimo.Serie.Value(), ultimo.Referencia.Serie.Value())
 	}
 	if *ultimo.Referencia != *n2 {
 		return fmt.Errorf(
-			"la cadena está rota: el último registro %s referencia a %s con huella %s, pero el registro real conservado es %s con huella %s",
+			"la cadena está rota: el último chainRow %s referencia a %s con huella %s, pero el chainRow real conservado es %s con huella %s",
 			ultimo.Serie.Value(), ultimo.Referencia.Serie.Value(), ultimo.Referencia.Huella.Value(),
 			n2.Serie.Value(), n2.Huella.Value())
 	}

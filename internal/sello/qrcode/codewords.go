@@ -111,7 +111,7 @@ func rsEncode(data []byte, n int) []byte {
 // data en modo byte y nivel M, eligiendo la menor versión 1..10 que la
 // contenga.
 func Codewords(data []byte) (version int, cw []byte, err error) {
-	spec, version, err := elegirVersion(len(data))
+	spec, version, err := chooseVersion(len(data))
 	if err != nil {
 		return 0, nil, err
 	}
@@ -176,7 +176,7 @@ func Codewords(data []byte) (version int, cw []byte, err error) {
 
 func (s blockSpec) totalData() int { return s.g1Blocks*s.g1Data + s.g2Blocks*s.g2Data }
 
-func elegirVersion(n int) (blockSpec, int, error) {
+func chooseVersion(n int) (blockSpec, int, error) {
 	for v := 1; v <= 10; v++ {
 		spec := specByVersion[v]
 		countBits := 8

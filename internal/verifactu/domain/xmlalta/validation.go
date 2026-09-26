@@ -46,7 +46,7 @@ func validAmount(value string) bool {
 // validateVersion enforces the fixed schema version.
 func validateVersion(version string) []error {
 	if version != IDVersion {
-		return []error{fmt.Errorf("la versión del registro debe ser %s: %q", IDVersion, version)}
+		return []error{fmt.Errorf("la versión del chainRow debe ser %s: %q", IDVersion, version)}
 	}
 	return nil
 }
@@ -70,7 +70,7 @@ func validateRecordFooter(chaining *Chaining, system SoftwareSystem, generatedAt
 	errs = append(errs, validateChaining(chaining)...)
 	errs = append(errs, validateSoftwareSystem(system)...)
 	if !validDateTime(generatedAt) {
-		errs = append(errs, fmt.Errorf("la fecha y hora de generación del registro (FechaHoraHusoGenRegistro) debe incluir el huso horario, p. ej. 2024-09-13T19:20:30+01:00: %q", generatedAt))
+		errs = append(errs, fmt.Errorf("la fecha y hora de generación del chainRow (FechaHoraHusoGenRegistro) debe incluir el huso horario, p. ej. 2024-09-13T19:20:30+01:00: %q", generatedAt))
 	}
 	if fingerprintType != FingerprintTypeSHA256 {
 		errs = append(errs, fmt.Errorf("el tipo de huella (TipoHuella) debe ser %s: %q", FingerprintTypeSHA256, fingerprintType))
@@ -92,14 +92,14 @@ func validateChaining(chaining *Chaining) []error {
 	case "S":
 		// First record of the chain.
 	default:
-		errs = append(errs, fmt.Errorf("el indicador de primer registro (PrimerRegistro) solo admite S: %q", chaining.FirstRecord))
+		errs = append(errs, fmt.Errorf("el indicador de primer chainRow (PrimerRegistro) solo admite S: %q", chaining.FirstRecord))
 	}
 	if previous := chaining.PreviousRecord; previous != nil {
 		if !fingerprintPattern.MatchString(previous.Fingerprint) {
-			errs = append(errs, fmt.Errorf("la huella del registro anterior (Huella) debe ser el SHA-256 en hexadecimal mayúsculas de 64 caracteres: %q", previous.Fingerprint))
+			errs = append(errs, fmt.Errorf("la huella del chainRow anterior (Huella) debe ser el SHA-256 en hexadecimal mayúsculas de 64 caracteres: %q", previous.Fingerprint))
 		}
 		if previous.ExpeditionDate != "" && !validDate(previous.ExpeditionDate) {
-			errs = append(errs, fmt.Errorf("la fecha de expedición del registro anterior debe tener formato DD-MM-AAAA: %q", previous.ExpeditionDate))
+			errs = append(errs, fmt.Errorf("la fecha de expedición del chainRow anterior debe tener formato DD-MM-AAAA: %q", previous.ExpeditionDate))
 		}
 	}
 	return errs

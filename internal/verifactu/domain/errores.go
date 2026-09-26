@@ -4,7 +4,7 @@ import "fmt"
 
 // CategoriaError clasifica un código de error de la AEAT según su efecto
 // sobre el envío (clasificación derivada del documento oficial de
-// validaciones: 4xxx rechazo total, 1xxx rechazo de registro, 2xxx aceptado
+// validaciones: 4xxx rechazo total, 1xxx rechazo de chainRow, 2xxx aceptado
 // con errores, 3000 duplicado, 35xx error transitorio de la AEAT).
 type CategoriaError string
 
@@ -27,7 +27,7 @@ type InfoError struct {
 	// Reintentable: el reintento automático puede resolverlo (solo errores
 	// transitorios del lado AEAT).
 	Reintentable bool
-	// Aceptado: el registro consta en la AEAT a pesar del código (avisos y
+	// Aceptado: el chainRow consta en la AEAT a pesar del código (avisos y
 	// duplicados se tratan como aceptados).
 	Aceptado bool
 	// Accion es la recomendación en español para mostrar al usuario.
@@ -54,7 +54,7 @@ var erroresAEAT = map[string]InfoError{
 	"4201": {Codigo: "4201", Descripcion: "Encoding XML no soportado", Categoria: CategoriaRechazoTotal, Accion: "Actualiza la aplicación y reintenta."},
 	"4202": {Codigo: "4202", Descripcion: "Namespace XML incorrecto", Categoria: CategoriaRechazoTotal, Accion: "Actualiza la aplicación y reintenta."},
 
-	// 1xxx: rechazo del registro individual.
+	// 1xxx: rechazo del chainRow individual.
 	"1100": {Codigo: "1100", Descripcion: "Formato de NIF no válido", Categoria: CategoriaRechazoRegistro, Accion: "Corrige el NIF (el de tu empresa o el del destinatario) y vuelve a sellar."},
 	"1101": {Codigo: "1101", Descripcion: "Tipo de factura no válido", Categoria: CategoriaRechazoRegistro, Accion: "Revisa el tipo de factura (F1, R1…)."},
 	"1102": {Codigo: "1102", Descripcion: "Formato de fecha no válido", Categoria: CategoriaRechazoRegistro, Accion: "Corrige la fecha de la factura (formato día-mes-año)."},
@@ -66,7 +66,7 @@ var erroresAEAT = map[string]InfoError{
 	"1108": {Codigo: "1108", Descripcion: "Número de DetalleDesglose excede el máximo (12)", Categoria: CategoriaRechazoRegistro, Accion: "La factura tiene más de 12 desgloses de IVA: agrupa por tipo."},
 	"1109": {Codigo: "1109", Descripcion: "ClaveRegimen no válida", Categoria: CategoriaRechazoRegistro, Accion: "Revisa la clave de régimen del IVA."},
 	"1110": {Codigo: "1110", Descripcion: "Faltan destinatarios cuando son obligatorios", Categoria: CategoriaRechazoRegistro, Accion: "Las facturas completas exigen los datos del cliente."},
-	"1111": {Codigo: "1111", Descripcion: "Huella (hash) del registro anterior no válida", Categoria: CategoriaRechazoRegistro, Accion: "No toques nada y avísanos: la cadena de registros requiere revisión."},
+	"1111": {Codigo: "1111", Descripcion: "Huella (hash) del chainRow anterior no válida", Categoria: CategoriaRechazoRegistro, Accion: "No toques nada y avísanos: la cadena de registros requiere revisión."},
 	"1112": {Codigo: "1112", Descripcion: "Sistema informático de facturación no identificado", Categoria: CategoriaRechazoRegistro, Accion: "Actualiza la aplicación (identificación del sistema)."},
 	"1113": {Codigo: "1113", Descripcion: "Tipo de impuesto no válido", Categoria: CategoriaRechazoRegistro, Accion: "Revisa el tipo de impuesto (01 para IVA)."},
 	"1114": {Codigo: "1114", Descripcion: "Recargo de equivalencia no válido", Categoria: CategoriaRechazoRegistro, Accion: "Revisa los recargos de equivalencia aplicados."},

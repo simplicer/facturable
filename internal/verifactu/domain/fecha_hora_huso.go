@@ -26,7 +26,7 @@ type FechaHoraHuso struct {
 func NewFechaHoraHuso(raw string) (FechaHoraHuso, error) {
 	trimmed := trimSpaces(raw)
 	if trimmed == "" {
-		return FechaHoraHuso{}, fmt.Errorf("la fecha y hora de generación del registro no puede estar vacía")
+		return FechaHoraHuso{}, fmt.Errorf("la fecha y hora de generación del chainRow no puede estar vacía")
 	}
 	parsed, err := time.Parse(fechaHoraHusoLayout, trimmed)
 	if err != nil {

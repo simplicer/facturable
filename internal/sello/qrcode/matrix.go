@@ -20,7 +20,7 @@ func Encode(data []byte) (*Matrix, error) {
 	var bestM [][]bool
 	for mask := 0; mask < 8; mask++ {
 		m := buildMatrix(version, size, cw, mask)
-		p := penalidad(m)
+		p := penalty(m)
 		if best == -1 || p < best {
 			best, bestM = p, m
 		}
@@ -29,20 +29,20 @@ func Encode(data []byte) (*Matrix, error) {
 }
 
 func buildMatrix(version, size int, cw []byte, mask int) [][]bool {
-	m := nuevaMatriz(size)
-	reservado := nuevaMatriz(size) // funciones ya fijadas
+	m := newMatrix(size)
+	reservado := newMatrix(size) // funciones ya fijadas
 
-	colocarFunciones(m, reservado, version, size)
-	colocarDatos(m, reservado, cw, size)
-	aplicarMascara(m, reservado, mask, size)
-	colocarFormatInfo(m, mask, size)
+	placeFunctions(m, reservado, version, size)
+	placeData(m, reservado, cw, size)
+	applyMask(m, reservado, mask, size)
+	placeFormatInfo(m, mask, size)
 	if version >= 7 {
-		colocarVersionInfo(m, version, size)
+		placeVersionInfo(m, version, size)
 	}
 	return m
 }
 
-func nuevaMatriz(size int) [][]bool {
+func newMatrix(size int) [][]bool {
 	m := make([][]bool, size)
 	for i := range m {
 		m[i] = make([]bool, size)
@@ -50,9 +50,9 @@ func nuevaMatriz(size int) [][]bool {
 	return m
 }
 
-// colocarFunciones dibuja patrones de posición, separadores, alineación,
+// placeFunctions dibuja patrones de posición, separadores, alineación,
 // temporización, módulo oscuro y zonas reservadas de format/version info.
-func colocarFunciones(m, reservado [][]bool, version, size int) {
+func placeFunctions(m, reservado [][]bool, version, size int) {
 	// patrones de posición + separadores
 	ponerFinder := func(fila, col int) {
 		for dr := -1; dr <= 7; dr++ {
@@ -128,9 +128,9 @@ func colocarFunciones(m, reservado [][]bool, version, size int) {
 	}
 }
 
-// colocarDatos coloca los codewords en zigzag desde la esquina inferior
+// placeData coloca los codewords en zigzag desde la esquina inferior
 // derecha, saltando la columna 6 y las zonas reservadas.
-func colocarDatos(m, reservado [][]bool, cw []byte, size int) {
+func placeData(m, reservado [][]bool, cw []byte, size int) {
 	bit := 0
 	totalBits := len(cw) * 8
 	down := true
@@ -159,21 +159,21 @@ func colocarDatos(m, reservado [][]bool, cw []byte, size int) {
 	}
 }
 
-// aplicarMascara aplica la máscara mask a los módulos de datos.
-func aplicarMascara(m, reservado [][]bool, mask, size int) {
+// applyMask aplica la máscara mask a los módulos de datos.
+func applyMask(m, reservado [][]bool, mask, size int) {
 	for r := 0; r < size; r++ {
 		for c := 0; c < size; c++ {
 			if reservado[r][c] {
 				continue
 			}
-			if mascaraBit(mask, r, c) {
+			if maskBit(mask, r, c) {
 				m[r][c] = !m[r][c]
 			}
 		}
 	}
 }
 
-func mascaraBit(mask, r, c int) bool {
+func maskBit(mask, r, c int) bool {
 	switch mask {
 	case 0:
 		return (r+c)%2 == 0
@@ -194,7 +194,7 @@ func mascaraBit(mask, r, c int) bool {
 	}
 }
 
-// colocarFormatInfo escribe los 15 bits (dos copias) para nivel M + máscara:
+// placeFormatInfo escribe los 15 bits (dos copias) para nivel M + máscara:
 //
 //	vertical (columna 8): bits 0..5 en filas 0..5, bits 6..7 en filas 7..8,
 //	  bits 8..14 en filas size-7..size-1 (LSB arriba).
@@ -202,7 +202,7 @@ func mascaraBit(mask, r, c int) bool {
 //	  columna 7, bits 9..14 en columnas 5..0 (LSB a la derecha).
 //
 // Más el módulo oscuro fijo en (size-8, 8).
-func colocarFormatInfo(m [][]bool, mask, size int) {
+func placeFormatInfo(m [][]bool, mask, size int) {
 	fi := formatInfo(mask)
 	bit := func(i int) bool { return fi&(1<<uint(i)) != 0 }
 
@@ -238,10 +238,10 @@ func formatInfo(mask int) int {
 	return (data<<10 | fi) ^ formatInfoMask
 }
 
-// colocarVersionInfo escribe los 18 bits (v>=7) en sus dos bloques de 6x3:
+// placeVersionInfo escribe los 18 bits (v>=7) en sus dos bloques de 6x3:
 // bloque superior-derecho fila-major con el bit MENOS significativo en
 // (0, size-11); el inferior-izquierdo es su traspuesto (ISO 18004).
-func colocarVersionInfo(m [][]bool, version, size int) {
+func placeVersionInfo(m [][]bool, version, size int) {
 	vi := versionInfo(version)
 	for i := 0; i < 18; i++ {
 		bit := vi&(1<<uint(i)) != 0
@@ -262,14 +262,14 @@ func versionInfo(version int) int {
 
 // ---- penalización ISO 18004 (para elegir máscara) ----
 
-func penalidad(m [][]bool) int {
+func penalty(m [][]bool) int {
 	size := len(m)
 	p := 0
 
 	// regla 1: 5+ módulos iguales seguidos en filas/columnas
 	for i := 0; i < size; i++ {
-		p += rachas(m, i, true)
-		p += rachas(m, i, false)
+		p += runs(m, i, true)
+		p += runs(m, i, false)
 	}
 
 	// regla 2: bloques 2x2 del mismo color
@@ -334,7 +334,7 @@ func penalidad(m [][]bool) int {
 	return p
 }
 
-func rachas(m [][]bool, i int, fila bool) int {
+func runs(m [][]bool, i int, fila bool) int {
 	size := len(m)
 	p := 0
 	run, prev := 0, -1
