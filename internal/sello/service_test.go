@@ -14,7 +14,7 @@ import (
 // fakeSubmitter acepta todo y devuelve una línea por chainRow del XML.
 type fakeSubmitter struct{ recibidos []string }
 
-func (r *fakeSubmitter) Remitir(_ context.Context, soapXML string) (application.RespuestaLote, error) {
+func (r *fakeSubmitter) Submit(_ context.Context, soapXML string) (application.RespuestaLote, error) {
 	r.recibidos = append(r.recibidos, soapXML)
 	lote := application.RespuestaLote{EstadoGlobal: "Correcto", CSV: "CSVSIMULADO00001", TiempoEsperaSeg: 0}
 	for _, series := range extractSeries(soapXML) {
@@ -70,10 +70,10 @@ func TestCircuitoCompleto(t *testing.T) {
 	reloj := &relojFalso{t: time.Date(2027, 1, 5, 10, 0, 0, 0, time.UTC)}
 	remisor := &fakeSubmitter{}
 	srv := &Service{
-		Store: store, Remisor: remisor,
+		Store: store, Submitter: remisor,
 		Flujo:     application.NewControlFlujo(reloj.ahora),
 		EmisorNIF: "B72877814", EmisorNombre: "Facturable Test SL",
-		Sistema: application.SistemaLocal{
+		Sistema: application.SystemInfo{
 			NombreProductor: "Facturable Test SL", NIFProductor: "B72877814",
 			NombreSistema: "Facturable Sello", IDSistema: "FS",
 			Version: "0.1.0", NumeroInstalacion: "00001"},
@@ -133,10 +133,10 @@ func TestCircuitoIngestaConErroresNoRompeLibro(t *testing.T) {
 	}
 	defer store.Close()
 	reloj := &relojFalso{t: time.Date(2027, 1, 5, 10, 0, 0, 0, time.UTC)}
-	srv := &Service{Store: store, Remisor: &fakeSubmitter{},
+	srv := &Service{Store: store, Submitter: &fakeSubmitter{},
 		Flujo:     application.NewControlFlujo(reloj.ahora),
 		EmisorNIF: "B72877814", EmisorNombre: "Facturable Test SL",
-		Sistema: application.SistemaLocal{NombreProductor: "p", NIFProductor: "B72877814",
+		Sistema: application.SystemInfo{NombreProductor: "p", NIFProductor: "B72877814",
 			NombreSistema: "s", IDSistema: "FS", Version: "0", NumeroInstalacion: "1"}}
 
 	res, err := srv.IngestCSV(strings.NewReader("numero_serie,fecha,tipo,descripcion,nif_cliente,nombre_cliente,tipo_impositivo,base,cuota\n F-2027-0009,99-99-2027,F1,x,B44531218,ACME,21,10.00,2.10\n"))

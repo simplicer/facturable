@@ -10,9 +10,9 @@ import (
 	"facturable/internal/verifactu/domain/xmlalta"
 )
 
-// SistemaLocal identifica el SIF en cada chainRow (art. 15 OM: productor,
+// SystemInfo identifica el SIF en cada chainRow (art. 15 OM: productor,
 // IdSistemaInformatico de 2 caracteres, versión e instalación).
-type SistemaLocal struct {
+type SystemInfo struct {
 	NombreProductor, NIFProductor string
 	NombreSistema, IDSistema      string // IDSistema: exactamente 2 caracteres
 	Version, NumeroInstalacion    string
@@ -38,24 +38,24 @@ type BreakdownDraft struct {
 	TaxRate, Base, Cuota string
 }
 
-// EstadoCadena es la foto del libro que el llamador saca del almacén:
+// ChainState es la foto del libro que el llamador saca del almacén:
 //   - Last: identidad (series/fecha/huella) del último chainRow, n-1.
 //   - DeclaradoPorUltimo: el enlace que n-1 incrustó hacia n-2 (nil si n-1
 //     fue el primero). Es lo que permite detectar manipulaciones.
 //   - Previous: identidad real de n-2 según el almacén (nil si no existe).
 //
 // Last nil = cadena vacía.
-type EstadoCadena struct {
-	Last               *EnlaceTriple
-	DeclaradoPorUltimo *EnlaceTriple
-	Previous           *EnlaceTriple
+type ChainState struct {
+	Last               *ChainLink
+	DeclaradoPorUltimo *ChainLink
+	Previous           *ChainLink
 }
 
-// EnlaceTriple identifica un chainRow: series, fecha y huella.
-type EnlaceTriple struct{ Serie, Date, Huella string }
+// ChainLink identifica un chainRow: series, fecha y huella.
+type ChainLink struct{ Serie, Date, Huella string }
 
-// ResultadoSellar es todo lo que hay que persistir tras sellar.
-type ResultadoSellar struct {
+// SealResult es todo lo que hay que persistir tras sellar.
+type SealResult struct {
 	XML string // sobre SOAP completo del chainRow (envío unitario)
 
 	NIF, Serie, Date, Tipo                 string
@@ -64,10 +64,10 @@ type ResultadoSellar struct {
 	EsPrimero                              bool
 }
 
-// SellarAlta convierte un borrador en chainRow de facturación encadenado
+// SealInvoice convierte un borrador en chainRow de facturación encadenado
 // con su XML de remisión. Verifica el salto n-1/n-2 antes de sellar
 // (FAQ AEAT de trazabilidad) y calcula totales por suma exacta en céntimos.
-func SellarAlta(emisorNIF, emisorNombre string, b InvoiceDraft, sis SistemaLocal, cadena EstadoCadena, ahora time.Time) (*ResultadoSellar, error) {
+func SealInvoice(emisorNIF, emisorNombre string, b InvoiceDraft, sis SystemInfo, cadena ChainState, ahora time.Time) (*SealResult, error) {
 	nif, err := domain.NewNIF(emisorNIF)
 	if err != nil {
 		return nil, fmt.Errorf("NIF del emisor: %v", err)
@@ -130,7 +130,7 @@ func SellarAlta(emisorNIF, emisorNombre string, b InvoiceDraft, sis SistemaLocal
 		if cadena.Previous != nil {
 			ant = toDomainEnlace(*cadena.Previous)
 		}
-		vigente := domain.RegistroVigente{Enlace: *ult, Referencia: declarado}
+		vigente := domain.LastChainRecord{Enlace: *ult, Referencia: declarado}
 		if err := domain.VerificarSalto(vigente, ant); err != nil {
 			return nil, fmt.Errorf("no se puede sellar: %v", err)
 		}
@@ -204,7 +204,7 @@ func SellarAlta(emisorNIF, emisorNombre string, b InvoiceDraft, sis SistemaLocal
 		return nil, fmt.Errorf("no se pudo generar el XML de remisión: %v", err)
 	}
 
-	res := &ResultadoSellar{
+	res := &SealResult{
 		XML: xmlStr, NIF: nif.Value(), Serie: series.Value(),
 		Date: fecha.Date(), Tipo: tipo.String(),
 		Cuota: fromCents(cuotaCent), Importe: fromCents(baseCent + cuotaCent),
@@ -218,7 +218,7 @@ func SellarAlta(emisorNIF, emisorNombre string, b InvoiceDraft, sis SistemaLocal
 	return res, nil
 }
 
-func toDomainLink(t EnlaceTriple) *domain.Enlace {
+func toDomainLink(t ChainLink) *domain.Enlace {
 	return &domain.Enlace{
 		Serie:  mustSerial(t.Serie),
 		Date:   mustDate(t.Date),
@@ -226,7 +226,7 @@ func toDomainLink(t EnlaceTriple) *domain.Enlace {
 	}
 }
 
-func toDomainEnlace(t EnlaceTriple) *domain.Enlace { return toDomainLink(t) }
+func toDomainEnlace(t ChainLink) *domain.Enlace { return toDomainLink(t) }
 
 func mustSerial(raw string) domain.SerieNumero {
 	s, err := domain.NewSerieNumero(raw)
@@ -261,6 +261,12 @@ func mustTotal(raw string) domain.ImporteTotal {
 }
 
 // toCents parsea "123.45" (2 decimales, punto o coma) a céntimos exactos.
+// ToCents parses "123.45" (2 decimals, dot or comma) into exact cents.
+func ToCents(raw string) (int, error) { return toCents(raw) }
+
+// FromCents renders exact cents as a decimal string.
+func FromCents(c int) string { return fromCents(c) }
+
 func toCents(raw string) (int, error) {
 	s := strings.Replace(strings.TrimSpace(raw), ",", ".", 1)
 	partes := strings.Split(s, ".")

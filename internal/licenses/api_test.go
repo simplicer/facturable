@@ -24,7 +24,7 @@ func nuevoAPIPrueba(t *testing.T, ahora func() time.Time) (*API, *httptest.Serve
 	if err != nil {
 		t.Fatal(err)
 	}
-	api, err := NuevaAPI(db, priv)
+	api, err := NewAPI(db, priv)
 	if err != nil {
 		t.Fatal(err)
 	}

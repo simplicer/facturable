@@ -1,4 +1,4 @@
-package plataforma
+package platform
 
 import (
 	"encoding/json"

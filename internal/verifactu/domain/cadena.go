@@ -16,10 +16,10 @@ func (e Enlace) IsZero() bool {
 	return e.Serie.IsZero() && e.Date.IsZero() && e.Huella.IsZero()
 }
 
-// RegistroVigente is the store view of the LAST record (n-1) needed to chain
+// LastChainRecord is the store view of the LAST record (n-1) needed to chain
 // the next one: its own identity plus the enlace it declared towards its
 // predecessor (nil when n-1 was the first record of the chain).
-type RegistroVigente struct {
+type LastChainRecord struct {
 	Enlace             // identity of n-1 itself (series, date, own huella).
 	Referencia *Enlace // what n-1 declared about n-2; nil if n-1 was first.
 }
@@ -28,7 +28,7 @@ type RegistroVigente struct {
 // AEAT FAQ requires before generating record n: the enlace that n-1 declares
 // towards n-2 must match the real identity and huella of n-2 held by the
 // store. This is what makes silent omissions and insertions detectable.
-func VerificarSalto(ultimo RegistroVigente, n2 *Enlace) error {
+func VerificarSalto(ultimo LastChainRecord, n2 *Enlace) error {
 	if ultimo.Referencia == nil {
 		if n2 != nil {
 			return fmt.Errorf(

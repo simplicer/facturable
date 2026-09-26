@@ -1,6 +1,6 @@
 // Package application holds the Veri*Factu use cases: parsing AEAT
 // submission responses, the mandatory flow control between batches and the
-// Remisor port the infrastructure implements (SOAP client).
+// Submitter port the infrastructure implements (SOAP client).
 package application
 
 import (
@@ -42,10 +42,10 @@ func (l RespuestaLinea) Aceptada() bool {
 	return l.Estado == "Correcto" || l.Estado == "AceptadoConErrores"
 }
 
-// Remisor is the port that ships a signed SOAP batch to the AEAT and
+// Submitter is the port that ships a signed SOAP batch to the AEAT and
 // returns its answer. Implementations live in infrastructure.
-type Remisor interface {
-	Remitir(ctx context.Context, soapXML string) (RespuestaLote, error)
+type Submitter interface {
+	Submit(ctx context.Context, soapXML string) (RespuestaLote, error)
 }
 
 // respuestaEnvelope mirrors the AEAT response XML by local name (prefixes

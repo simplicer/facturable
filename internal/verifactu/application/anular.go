@@ -8,10 +8,10 @@ import (
 	"facturable/internal/verifactu/domain/xmlalta"
 )
 
-// SellarAnulacion genera el chainRow de anulación de una factura emitida y
+// SealCancellation genera el chainRow de anulación de una factura emitida y
 // lo encadena como cualquier otro chainRow (FAQ AEAT: altas y anulaciones
 // comparten la MISMA cadena, en orderSeen de generación).
-func SellarAnulacion(emisorNIF, emisorNombre string, series, fecha string, sis SistemaLocal, cadena EstadoCadena, ahora time.Time) (*ResultadoSellar, error) {
+func SealCancellation(emisorNIF, emisorNombre string, series, fecha string, sis SystemInfo, cadena ChainState, ahora time.Time) (*SealResult, error) {
 	nif, err := domain.NewNIF(emisorNIF)
 	if err != nil {
 		return nil, fmt.Errorf("NIF del emisor: %v", err)
@@ -28,7 +28,7 @@ func SellarAnulacion(emisorNIF, emisorNombre string, series, fecha string, sis S
 		return nil, fmt.Errorf("no se puede anular %s: el libro no tiene registros de esa empresa", series)
 	}
 
-	// verificación del salto n-1/n-2 (idéntica a SellarAlta)
+	// verificación del salto n-1/n-2 (idéntica a SealInvoice)
 	ult := toDomainLink(*cadena.Last)
 	var declarado, ant *domain.Enlace
 	if cadena.DeclaradoPorUltimo != nil {
@@ -37,7 +37,7 @@ func SellarAnulacion(emisorNIF, emisorNombre string, series, fecha string, sis S
 	if cadena.Previous != nil {
 		ant = toDomainEnlace(*cadena.Previous)
 	}
-	if err := domain.VerificarSalto(domain.RegistroVigente{Enlace: *ult, Referencia: declarado}, ant); err != nil {
+	if err := domain.VerificarSalto(domain.LastChainRecord{Enlace: *ult, Referencia: declarado}, ant); err != nil {
 		return nil, fmt.Errorf("no se puede anular: %v", err)
 	}
 
@@ -77,7 +77,7 @@ func SellarAnulacion(emisorNIF, emisorNombre string, series, fecha string, sis S
 		return nil, fmt.Errorf("no se pudo generar el XML de anulación: %v", err)
 	}
 
-	return &ResultadoSellar{
+	return &SealResult{
 		XML: xmlStr, NIF: nif.Value(), Serie: serieVO.Value(),
 		Date: fechaVO.Date(), Tipo: "ANULACION",
 		Generado: generado.ISO8601(), Huella: huella.Value(),

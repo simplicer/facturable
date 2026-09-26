@@ -20,9 +20,9 @@ func newTestService(t *testing.T) (*Service, *fakeSubmitter, *relojFalso, string
 	t.Cleanup(func() { _ = store.Close() })
 	r := &fakeSubmitter{}
 	reloj := &relojFalso{t: time.Date(2027, 1, 5, 10, 0, 0, 0, time.UTC)}
-	srv := &Service{Store: store, Remisor: r, Flujo: application.NewControlFlujo(reloj.ahora),
+	srv := &Service{Store: store, Submitter: r, Flujo: application.NewControlFlujo(reloj.ahora),
 		EmisorNIF: "B72877814", EmisorNombre: "Facturable Test SL",
-		Sistema: application.SistemaLocal{NombreProductor: "Facturable Test SL", NIFProductor: "B72877814",
+		Sistema: application.SystemInfo{NombreProductor: "Facturable Test SL", NIFProductor: "B72877814",
 			NombreSistema: "Facturable Sello", IDSistema: "FS", Version: "0.1.0", NumeroInstalacion: "00001"}}
 	return srv, r, reloj, dir
 }

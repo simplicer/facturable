@@ -11,19 +11,19 @@ import (
 	"time"
 
 	"facturable/internal/licenses"
-	"facturable/internal/plataforma"
+	"facturable/internal/platform"
 	"facturable/internal/relay"
 
 	_ "modernc.org/sqlite"
 )
 
 func main() {
-	cfg, err := plataforma.LoadConfig(envOr("FACTURABLE_CONFIG", "etc/config.json"))
+	cfg, err := platform.LoadConfig(envOr("FACTURABLE_CONFIG", "etc/config.json"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config:", err)
 		os.Exit(1)
 	}
-	log, err := plataforma.NewLogger(cfg.Log.Dir, cfg.Log.Level)
+	log, err := platform.NewLogger(cfg.Log.Dir, cfg.Log.Level)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "log:", err)
 		os.Exit(1)
@@ -39,7 +39,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "claves:", err)
 		os.Exit(1)
 	}
-	apiLic, err := licenses.NuevaAPI(db, priv)
+	apiLic, err := licenses.NewAPI(db, priv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "licencias:", err)
 		os.Exit(1)

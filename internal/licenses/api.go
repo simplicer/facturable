@@ -65,7 +65,7 @@ type API struct {
 }
 
 // NewAPI builds the license service on an open sql DB.
-func NuevaAPI(db *sql.DB, priv ed25519.PrivateKey) (*API, error) {
+func NewAPI(db *sql.DB, priv ed25519.PrivateKey) (*API, error) {
 	st, err := newStore(db)
 	if err != nil {
 		return nil, err

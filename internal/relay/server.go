@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
 )
 
 // Server stores keys and opaque envelopes.

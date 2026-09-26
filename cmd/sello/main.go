@@ -23,7 +23,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -83,10 +82,10 @@ func main() {
 		return true, ""
 	}
 	srv := &sello.Service{
-		Store: store, Remisor: remisor,
+		Store: store, Submitter: remisor,
 		Flujo:     application.NewControlFlujo(time.Now),
 		EmisorNIF: nif, EmisorNombre: nombre,
-		Sistema: application.SistemaLocal{
+		Sistema: application.SystemInfo{
 			NombreProductor: "Facturable", NIFProductor: "B00000000", // productor real: T-8.1
 			NombreSistema: "Facturable Sello", IDSistema: "FS",
 			Version: version, NumeroInstalacion: "00001",
@@ -235,7 +234,7 @@ func main() {
 			EmpresaNombre: nombre, EmpresaNIF: nif,
 			Serie: f.Serie, Date: f.Date, Tipo: f.Tipo,
 			ClienteNIF: "",
-			Desgloses:  []pdf.DesgloseFactura{{Tipo: "", Base: importeMenosCuota(f.Importe, f.Cuota), Cuota: f.Cuota}},
+			Desgloses:  []pdf.DesgloseFactura{{Tipo: "", Base: baseDesde(f.Importe, f.Cuota), Cuota: f.Cuota}},
 			CuotaTotal: f.Cuota, ImporteTotal: f.Importe,
 			EstadoAEAT: f.Estado, CSV: f.CSV, URLCotejo: urlQR,
 		})
@@ -327,7 +326,7 @@ func withPIN(pin string, next http.Handler) http.Handler {
 
 // construirRemisor devuelve el remisor AEAT real cuando hay certificado, o
 // uno simulado en desarrollo (todo correcto) cuando no lo hay.
-func construirRemisor() (application.Remisor, string) {
+func construirRemisor() (application.Submitter, string) {
 	p12 := os.Getenv("SELLO_CERT_P12")
 	if p12 == "" {
 		return fakeSubmitter{}, "simulado (sin certificado)"
@@ -337,25 +336,25 @@ func construirRemisor() (application.Remisor, string) {
 		log.Fatalf("certificado: %v", err)
 	}
 	produccion := os.Getenv("SELLO_AEAT") == "produccion"
-	url := soap.Pruebas.VerifactuPersona
+	url := soap.Testing.PersonURL
 	if produccion {
-		url = soap.Produccion.VerifactuPersona
+		url = soap.Production.PersonURL
 	}
 	if os.Getenv("SELLO_CERT_TIPO") == "sello" { // seal certs hit www10
 		if produccion {
-			url = soap.Produccion.VerifactuSello
+			url = soap.Production.SealURL
 		} else {
-			url = soap.Pruebas.VerifactuSello
+			url = soap.Testing.SealURL
 		}
 	}
-	return soap.NewCliente(url, cert), "aeat"
+	return soap.NewClient(url, cert), "aeat"
 }
 
 // fakeSubmitter acepta cualquier XML devolviendo un veredicto correcto:
 // permite probar el circuito completo sin certificado ni red.
 type fakeSubmitter struct{}
 
-func (fakeSubmitter) Remitir(_ context.Context, soapXML string) (application.RespuestaLote, error) {
+func (fakeSubmitter) Submit(_ context.Context, soapXML string) (application.RespuestaLote, error) {
 	serie, fecha := seriesAndDateFromXML(soapXML)
 	return application.RespuestaLote{
 		EstadoGlobal: "Correcto", CSV: "SIMULADO0000000A",
@@ -403,15 +402,15 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// importeMenosCuota resta céntimos a céntimos para mostrar la base.
-func importeMenosCuota(importe, cuota string) string {
-	restar := func(a, b string) string {
-		ai, _ := strconv.Atoi(strings.Replace(a, ".", "", 1))
-		bi, _ := strconv.Atoi(strings.Replace(b, ".", "", 1))
-		r := ai - bi
-		return fmt.Sprintf("%d.%02d", r/100, r%100)
+
+// baseDesde computa base = total - cuota with exact cents (audit fix).
+func baseDesde(importe, cuota string) string {
+	ti, err1 := application.ToCents(importe)
+	ci, err2 := application.ToCents(cuota)
+	if err1 != nil || err2 != nil {
+		return importe
 	}
-	return restar(importe, cuota)
+	return application.FromCents(ti - ci)
 }
 
 func writeErr(w http.ResponseWriter, err error) {

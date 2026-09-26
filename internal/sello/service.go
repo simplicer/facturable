@@ -1,9 +1,8 @@
-// Package sello wires ingest, the SellarAlta use case, the SQLite ledger
-// and the AEAT Remisor: it is the local agent engine (the SIF).
+// Package sello wires ingest, the SealInvoice use case, the SQLite ledger
+// and the AEAT Submitter: it is the local agent engine (the SIF).
 package sello
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"time"
@@ -11,18 +10,26 @@ import (
 	"facturable/internal/sello/ingest"
 	"facturable/internal/sello/persistence"
 	"facturable/internal/verifactu/application"
-	"facturable/internal/verifactu/domain"
-	"facturable/internal/verifactu/domain/xmlalta"
 )
 
 // Service orquesta el ciclo completo del agente.
 type Service struct {
-	Store   *persistence.Store
-	Remisor application.Remisor
-	Flujo   *application.ControlFlujo
+	Store     *persistence.Store
+	Submitter application.Submitter
+	Flujo     *application.ControlFlujo
 
 	EmisorNIF, EmisorNombre string
-	Sistema                 application.SistemaLocal
+	Sistema                 application.SystemInfo
+	// Now is injected so tests control time; nil means UTC wall clock.
+	Now func() time.Time
+}
+
+// clock returns the injected clock or UTC wall time.
+func (s *Service) clock() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now().UTC()
 }
 
 // IngestResult resume una ingesta de CSV.
@@ -41,13 +48,13 @@ func (s *Service) IngestCSV(r io.Reader) (*IngestResult, error) {
 		if err != nil {
 			return res, err
 		}
-		sellado, err := application.SellarAlta(s.EmisorNIF, s.EmisorNombre,
+		sellado, err := application.SealInvoice(s.EmisorNIF, s.EmisorNombre,
 			application.InvoiceDraft{
 				Series: b.Series, Date: b.Date, Tipo: b.Tipo,
 				Description: b.Description, ClientNIF: b.ClientNIF,
 				ClientName: b.ClientName,
 				Desgloses:  toBreakdowns(b.Breakdowns),
-			}, s.Sistema, estado, time.Now())
+			}, s.Sistema, estado, s.clock())
 		if err != nil {
 			res.Errores = append(res.Errores, ingest.RowError{
 				Fila: b.Fila, Campo: "factura", Detalle: err.Error()})
@@ -88,12 +95,12 @@ func (s *Service) IngestDrafts(drafts []ingest.Draft) (*IngestResult, error) {
 			desgloses = append(desgloses, application.BreakdownDraft{
 				TaxRate: bd.TaxRate, Base: bd.Base, Cuota: bd.Fee})
 		}
-		sellado, err := application.SellarAlta(s.EmisorNIF, s.EmisorNombre,
+		sellado, err := application.SealInvoice(s.EmisorNIF, s.EmisorNombre,
 			application.InvoiceDraft{
 				Series: d.Series, Date: d.Date, Tipo: d.Tipo,
 				Description: d.Description, ClientNIF: d.ClientNIF,
 				ClientName: d.ClientName, Desgloses: desgloses,
-			}, s.Sistema, estado, time.Now())
+			}, s.Sistema, estado, s.clock())
 		if err != nil {
 			res.Errores = append(res.Errores, ingest.RowError{
 				Fila: i + 1, Campo: "factura", Detalle: err.Error()})
@@ -113,120 +120,26 @@ func (s *Service) IngestDrafts(drafts []ingest.Draft) (*IngestResult, error) {
 	return res, nil
 }
 
-// Cancel genera y guarda el chainRow de anulación de una factura.
-func (s *Service) Cancel(series, fecha string) (int64, error) {
-	estado, err := s.chainState()
-	if err != nil {
-		return 0, err
-	}
-	res, err := application.SellarAnulacion(s.EmisorNIF, s.EmisorNombre, series, fecha, s.Sistema, estado, time.Now())
-	if err != nil {
-		return 0, err
-	}
-	id, err := s.Store.Append(persistence.StoredRecord{
-		NIF: res.NIF, Serie: res.Serie, Date: res.Date, Tipo: res.Tipo,
-		Generado: res.Generado, Cuota: "0.00", Importe: "0.00",
-		Huella: res.Huella, XML: res.XML,
-		EnlaceSerie: res.EnlaceSerie, EnlaceFecha: res.EnlaceFecha, EnlaceHuella: res.EnlaceHuella,
-	})
-	return id, err
-}
-
-// SubmitPending remite los pendientes en LOTES (hasta 1.000 registros por
-// sobre, un obligado por lote: spec AEAT §6.4.4.1), respetando el control
-// de flujo entre envíos y registrando la respuesta por registro.
-func (s *Service) SubmitPending(ctx context.Context) (int, error) {
-	if !s.Flujo.PuedeEnviar(1000) {
-		return 0, nil
-	}
-	pendientes, err := s.Store.Pending(s.EmisorNIF, 1000)
-	if err != nil {
-		return 0, err
-	}
-	if len(pendientes) == 0 {
-		return 0, nil
-	}
-
-	blocks := make([]string, 0, len(pendientes))
-	for _, p := range pendientes {
-		bloques := xmlalta.SplitRecordBlocks(p.XML)
-		if len(bloques) == 0 {
-			return 0, fmt.Errorf("registro %s ilegible: sin bloque RegistroFactura", p.Serie)
-		}
-		blocks = append(blocks, bloques...)
-	}
-	sobre, err := xmlalta.BatchFromBlocks(s.EmisorNombre, s.EmisorNIF, blocks)
-	if err != nil {
-		return 0, err
-	}
-	lote, err := s.Remisor.Remitir(ctx, sobre)
-	if err != nil {
-		return 0, fmt.Errorf("envío de lote: %w", err)
-	}
-	s.Flujo.RegistrarEnvio(lote)
-	enviados := 0
-	for _, p := range pendientes {
-		if err := s.recordResponse(p, lote); err != nil {
-			return enviados, err
-		}
-		enviados++
-	}
-	return enviados, nil
-}
-
-func (s *Service) recordResponse(p persistence.PendingRecord, lote application.RespuestaLote) error {
-	linea := lineFor(p, lote)
-	if linea == nil {
-		return s.Store.RecordSubmission(persistence.StoredSubmission{
-			RegistroID: p.ID, Estado: "rechazado",
-			Detalle: "la AEAT no devolvió el veredicto de este chainRow"})
-	}
-	estado := map[string]string{
-		"Correcto": "correcto", "AceptadoConErrores": "aceptado_errores", "Incorrecto": "rechazado",
-	}[linea.Estado]
-	if estado == "" {
-		estado = "rechazado"
-	}
-	detalle := linea.DescripcionRaw
-	if linea.CodigoError != "" && linea.Estado != "Correcto" {
-		info := domain.ClasificarError(linea.CodigoError)
-		detalle = fmt.Sprintf("%s — %s", info.Description, info.Accion)
-	}
-	return s.Store.RecordSubmission(persistence.StoredSubmission{
-		RegistroID: p.ID, Estado: estado, CSV: lote.CSV,
-		Codigo: linea.CodigoError, Detalle: detalle})
-}
-
-func lineFor(p persistence.PendingRecord, lote application.RespuestaLote) *application.RespuestaLinea {
-	for i := range lote.Lineas {
-		l := &lote.Lineas[i]
-		if l.NumSerie == p.Serie && l.Date == p.Date {
-			return l
-		}
-	}
-	return nil
-}
-
-func (s *Service) chainState() (application.EstadoCadena, error) {
+func (s *Service) chainState() (application.ChainState, error) {
 	series, fecha, huella, enlS, enlF, enlH, ok, err := s.Store.Last(s.EmisorNIF)
 	if err != nil {
-		return application.EstadoCadena{}, err
+		return application.ChainState{}, err
 	}
 	if !ok {
-		return application.EstadoCadena{}, nil
+		return application.ChainState{}, nil
 	}
-	estado := application.EstadoCadena{
-		Last: &application.EnlaceTriple{Serie: series, Date: fecha, Huella: huella},
+	estado := application.ChainState{
+		Last: &application.ChainLink{Serie: series, Date: fecha, Huella: huella},
 	}
 	if enlS != "" {
-		estado.DeclaradoPorUltimo = &application.EnlaceTriple{Serie: enlS, Date: enlF, Huella: enlH}
+		estado.DeclaradoPorUltimo = &application.ChainLink{Serie: enlS, Date: enlF, Huella: enlH}
 	}
 	aS, aF, aH, aOk, err := s.Store.Previous(s.EmisorNIF)
 	if err != nil {
 		return estado, err
 	}
 	if aOk {
-		estado.Previous = &application.EnlaceTriple{Serie: aS, Date: aF, Huella: aH}
+		estado.Previous = &application.ChainLink{Serie: aS, Date: aF, Huella: aH}
 	}
 	return estado, nil
 }
@@ -239,6 +152,3 @@ func toBreakdowns(ds []ingest.BreakdownDraft) []application.BreakdownDraft {
 	}
 	return out
 }
-
-// realNow es el reloj de producción del agente.
-func realNow() time.Time { return time.Now() }

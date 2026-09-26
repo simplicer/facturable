@@ -20,14 +20,14 @@ func TestVerificarSalto(t *testing.T) {
 	n1, n2, n2ref := mustChainPieces(t)
 
 	t.Run("primer chainRow de la cadena", func(t *testing.T) {
-		ultimo := RegistroVigente{Enlace: n1, Referencia: nil}
+		ultimo := LastChainRecord{Enlace: n1, Referencia: nil}
 		if err := VerificarSalto(ultimo, nil); err != nil {
 			t.Fatalf("VerificarSalto() = %v, want nil", err)
 		}
 	})
 
 	t.Run("salto consistente n-2 n-1", func(t *testing.T) {
-		ultimo := RegistroVigente{Enlace: n1, Referencia: &n2ref}
+		ultimo := LastChainRecord{Enlace: n1, Referencia: &n2ref}
 		if err := VerificarSalto(ultimo, &n2); err != nil {
 			t.Fatalf("VerificarSalto() = %v, want nil", err)
 		}
@@ -36,7 +36,7 @@ func TestVerificarSalto(t *testing.T) {
 	t.Run("huella del enlace manipulada", func(t *testing.T) {
 		falsa := n2ref
 		falsa.Huella = mustHuella(t, "3333333333333333333333333333333333333333333333333333333333333333")
-		ultimo := RegistroVigente{Enlace: n1, Referencia: &falsa}
+		ultimo := LastChainRecord{Enlace: n1, Referencia: &falsa}
 		err := VerificarSalto(ultimo, &n2)
 		if err == nil {
 			t.Fatal("VerificarSalto() = nil, want rupture error")
@@ -44,7 +44,7 @@ func TestVerificarSalto(t *testing.T) {
 	})
 
 	t.Run("chainRow omitido: n-1 referencia a un n-2 desconocido", func(t *testing.T) {
-		ultimo := RegistroVigente{Enlace: n1, Referencia: &n2ref}
+		ultimo := LastChainRecord{Enlace: n1, Referencia: &n2ref}
 		err := VerificarSalto(ultimo, nil)
 		if err == nil {
 			t.Fatal("VerificarSalto() = nil, want missing-predecessor error")
@@ -52,7 +52,7 @@ func TestVerificarSalto(t *testing.T) {
 	})
 
 	t.Run("n-1 declara ser primero pero existe n-2", func(t *testing.T) {
-		ultimo := RegistroVigente{Enlace: n1, Referencia: nil}
+		ultimo := LastChainRecord{Enlace: n1, Referencia: nil}
 		err := VerificarSalto(ultimo, &n2)
 		if err == nil {
 			t.Fatal("VerificarSalto() = nil, want inconsistency error")

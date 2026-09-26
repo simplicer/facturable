@@ -1,6 +1,6 @@
 // Package plataforma provides shared technical plumbing: Loki-compatible
 // structured logging, configuration loading from etc/ and JSON helpers.
-package plataforma
+package platform
 
 import (
 	"encoding/json"

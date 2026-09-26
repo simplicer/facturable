@@ -12,8 +12,8 @@ import (
 )
 
 // newTestClient levanta un servidor que responde la respuesta AEAT de
-// ejemplo y devuelve un Cliente apuntando a él.
-func newTestClient(t *testing.T, status int, body string) (*Cliente, *httptest.Server) {
+// ejemplo y devuelve un Client apuntando a él.
+func newTestClient(t *testing.T, status int, body string) (*Client, *httptest.Server) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if ct := r.Header.Get("Content-Type"); ct != "application/soap+xml; charset=utf-8" {
@@ -23,7 +23,7 @@ func newTestClient(t *testing.T, status int, body string) (*Cliente, *httptest.S
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
-	return NewCliente(srv.URL, tls.Certificate{}), srv
+	return NewClient(srv.URL, tls.Certificate{}), srv
 }
 
 const okResponse = `<?xml version="1.0"?>
@@ -48,9 +48,9 @@ const okResponse = `<?xml version="1.0"?>
 
 func TestRemitirOK(t *testing.T) {
 	c, _ := newTestClient(t, http.StatusOK, okResponse)
-	lote, err := c.Remitir(context.Background(), "<envelope/>")
+	lote, err := c.Submit(context.Background(), "<envelope/>")
 	if err != nil {
-		t.Fatalf("Remitir() = %v", err)
+		t.Fatalf("Submit() = %v", err)
 	}
 	if lote.CSV != "ABC123DEF456GH78" || lote.EstadoGlobal != "Correcto" || len(lote.Lineas) != 1 {
 		t.Fatalf("lote = %+v", lote)
@@ -59,18 +59,18 @@ func TestRemitirOK(t *testing.T) {
 
 func TestRemitirHTTPError(t *testing.T) {
 	c, _ := newTestClient(t, http.StatusInternalServerError, "boom")
-	_, err := c.Remitir(context.Background(), "<envelope/>")
+	_, err := c.Submit(context.Background(), "<envelope/>")
 	if err == nil {
-		t.Fatal("Remitir() = nil, want error")
+		t.Fatal("Submit() = nil, want error")
 	}
 }
 
 func TestRemitirFault(t *testing.T) {
 	fault := `<?xml version="1.0"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><soapenv:Fault/></soapenv:Body></soapenv:Envelope>`
 	c, _ := newTestClient(t, http.StatusOK, fault)
-	_, err := c.Remitir(context.Background(), "<envelope/>")
+	_, err := c.Submit(context.Background(), "<envelope/>")
 	if err == nil {
-		t.Fatal("Remitir() = nil, want error para fault SOAP")
+		t.Fatal("Submit() = nil, want error para fault SOAP")
 	}
 }
 

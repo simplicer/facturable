@@ -18,7 +18,7 @@ import (
 	"facturable/internal/verifactu/domain/xmlalta"
 )
 
-func preprodCliente(t *testing.T) *Cliente {
+func preprodCliente(t *testing.T) *Client {
 	t.Helper()
 	p12 := os.Getenv("SELLO_CERT_P12")
 	if p12 == "" {
@@ -28,14 +28,14 @@ func preprodCliente(t *testing.T) *Cliente {
 	if err != nil {
 		t.Fatalf("certificado: %v", err)
 	}
-	return NewCliente(Pruebas.VerifactuPersona, cert)
+	return NewClient(Testing.PersonURL, cert)
 }
 
 func TestPreprodHandshake(t *testing.T) {
 	c := preprodCliente(t)
 	// un envío vacío debe recibir al menos una respuesta estructurada
 	// (rechazo por registros ausentes), lo que prueba TLS+SOAP extremo a extremo.
-	_, err := c.Remitir(context.Background(), envelopeVacio())
+	_, err := c.Submit(context.Background(), envelopeVacio())
 	if err == nil {
 		return // respuesta parseable: correcto
 	}
@@ -45,9 +45,9 @@ func TestPreprodHandshake(t *testing.T) {
 func TestPreprodAltaRegistroPrueba(t *testing.T) {
 	c := preprodCliente(t)
 	xmlStr := envelopeAltaPrueba(t)
-	lote, err := c.Remitir(context.Background(), xmlStr)
+	lote, err := c.Submit(context.Background(), xmlStr)
 	if err != nil {
-		t.Fatalf("Remitir(): %v", err)
+		t.Fatalf("Submit(): %v", err)
 	}
 	if lote.EstadoGlobal == "" {
 		t.Fatal("sin EstadoGlobal en la respuesta")
@@ -92,13 +92,13 @@ func envelopeAltaPrueba(t *testing.T) string {
 		ClientNIF:   "B44531218", ClientName: "CLIENTE QA SL",
 		Desgloses: []application.BreakdownDraft{{TaxRate: "21", Base: "10.00", Cuota: "2.10"}},
 	}
-	// El registro QA se construye con SellarAlta para validar el circuito completo
-	res, err := application.SellarAlta(qaNIF(), "NOMBRE CENSAL DEL CERTIFICADO", borrador, application.SistemaLocal{
+	// El registro QA se construye con SealInvoice para validar el circuito completo
+	res, err := application.SealInvoice(qaNIF(), "NOMBRE CENSAL DEL CERTIFICADO", borrador, application.SystemInfo{
 		NombreProductor: "Facturable", NIFProductor: "B00000000",
 		NombreSistema: "Facturable Sello", IDSistema: "FS", Version: "qa", NumeroInstalacion: "00001",
-	}, application.EstadoCadena{}, timeNowMadrid())
+	}, application.ChainState{}, timeNowMadrid())
 	if err != nil {
-		t.Fatalf("SellarAlta: %v", err)
+		t.Fatalf("SealInvoice: %v", err)
 	}
 	return res.XML
 }

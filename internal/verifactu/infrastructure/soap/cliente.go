@@ -1,4 +1,4 @@
-// Package soap implements the AEAT Remisor port over SOAP 1.2 with a
+// Package soap implements the AEAT Submitter port over SOAP 1.2 with a
 // client TLS certificate loaded from a P12/PFX file (qualified certificate
 // of the taxpayer or electronic seal).
 package soap
@@ -19,41 +19,41 @@ import (
 	sslmatep12 "software.sslmate.com/src/go-pkcs12"
 )
 
-// EntornoAEAT selects the official endpoint set (verified against the
+// AeatEndpoints selects the official endpoint set (verified against the
 // production WSDL, see docs/informes/INFORME-VERIFACTU.md §7).
-type EntornoAEAT struct {
-	VerifactuPersona string
-	VerifactuSello   string
+type AeatEndpoints struct {
+	PersonURL string
+	SealURL   string
 }
 
 var (
-	// Produccion son las URLs reales (www10 atiende certificados de sello).
-	Produccion = EntornoAEAT{
-		VerifactuPersona: "https://www1.agenciatributaria.gob.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
-		VerifactuSello:   "https://www10.agenciatributaria.gob.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
+	// Production son las URLs reales (www10 atiende certificados de sello).
+	Production = AeatEndpoints{
+		PersonURL: "https://www1.agenciatributaria.gob.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
+		SealURL:   "https://www10.agenciatributaria.gob.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
 	}
-	// Pruebas es el entorno de preproducción de la AEAT.
-	Pruebas = EntornoAEAT{
-		VerifactuPersona: "https://prewww1.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
-		VerifactuSello:   "https://prewww10.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
+	// Testing es el entorno de preproducción de la AEAT.
+	Testing = AeatEndpoints{
+		PersonURL: "https://prewww1.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
+		SealURL:   "https://prewww10.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
 	}
 )
 
-// Cliente es un Remisor SOAP hacia la AEAT.
-type Cliente struct {
+// Client es un Submitter SOAP hacia la AEAT.
+type Client struct {
 	url    string
 	http   *http.Client
 	certCN string
 }
 
-// NewCliente construye el cliente para una URL de entorno. El certificado
+// NewClient construye el cliente para una URL de entorno. El certificado
 // puede ser de persona física/jurídica (www1) o de sello (www10).
-func NewCliente(url string, cert tls.Certificate) *Cliente {
+func NewClient(url string, cert tls.Certificate) *Client {
 	// IMPORTANT: the client certificate goes in Certificates (mTLS); the
 	// trust anchors stay the SYSTEM pool (nil RootCAs). Pinning the server
 	// leaf into RootCAs here made every real submission fail with
 	// "x509: unknown authority" (external audit finding, fixed).
-	return &Cliente{
+	return &Client{
 		url: url,
 		http: &http.Client{
 			Timeout: 30 * time.Second,
@@ -84,12 +84,12 @@ func LoadP12(path, password string) (tls.Certificate, error) {
 	}, nil
 }
 
-// ErrFalloSOAP marca respuestas HTTP != 200 o faults SOAP.
-var ErrFalloSOAP = errors.New("la AEAT rechazó la llamada SOAP")
+// ErrSOAPFailure marca respuestas HTTP != 200 o faults SOAP.
+var ErrSOAPFailure = errors.New("la AEAT rechazó la llamada SOAP")
 
-// Remitir implementa application.Remisor: envía el lote firmado con el
+// Submit implementa application.Submitter: envía el lote firmado con el
 // certificado TLS de cliente y parsea la respuesta.
-func (c *Cliente) Remitir(ctx context.Context, soapXML string) (application.RespuestaLote, error) {
+func (c *Client) Submit(ctx context.Context, soapXML string) (application.RespuestaLote, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader([]byte(soapXML)))
 	if err != nil {
 		return application.RespuestaLote{}, fmt.Errorf("no se pudo preparar el envío a la AEAT: %w", err)
@@ -107,12 +107,12 @@ func (c *Cliente) Remitir(ctx context.Context, soapXML string) (application.Resp
 	}
 	if resp.StatusCode != http.StatusOK {
 		return application.RespuestaLote{}, fmt.Errorf("%w: HTTP %d: %s",
-			ErrFalloSOAP, resp.StatusCode, excerpt(body, 300))
+			ErrSOAPFailure, resp.StatusCode, excerpt(body, 300))
 	}
 	lote, err := application.ParseRespuesta(string(body))
 	if err != nil {
 		// Puede ser un Fault SOAP: se reporta con el detalle disponible.
-		return application.RespuestaLote{}, fmt.Errorf("%w: %v: %s", ErrFalloSOAP, err, excerpt(body, 300))
+		return application.RespuestaLote{}, fmt.Errorf("%w: %v: %s", ErrSOAPFailure, err, excerpt(body, 300))
 	}
 	return lote, nil
 }
