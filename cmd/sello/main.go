@@ -10,8 +10,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -134,6 +136,9 @@ func main() {
 		}
 		saveCertificate(w, r)
 	})
+	mux.HandleFunc("GET /v1/version", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]any{"data": map[string]string{"version": version}})
+	})
 	mux.HandleFunc("GET /v1/connectivity", checkConnectivity)
 	mux.HandleFunc("GET /v1/declaration", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -149,7 +154,9 @@ func main() {
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"status": "ok", "app": "facturable-sello", "modo": modo})
 	})
-	mux.HandleFunc("POST /v1/records", func(w http.ResponseWriter, r *http.Request) {
+	// Idempotent creation with client UUID (Zalando exception 1): same
+	// uuid+body replays the stored result, different body conflicts 409.
+	mux.HandleFunc("PUT /v1/records/{uuid}", func(w http.ResponseWriter, r *http.Request) {
 		if ok, motivo := licencia(); !ok {
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(http.StatusPaymentRequired)
@@ -157,12 +164,47 @@ func main() {
 				"title": "licencia", "status": 402, "detail": motivo})
 			return
 		}
-		res, err := srv.IngestCSV(r.Body)
+		batchUUID := r.PathValue("uuid")
+		body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		writeJSON(w, res)
+		hash := fmt.Sprintf("%x", sha256.Sum256(body))
+		if prev, ok, _ := store.GetIngestBatch(batchUUID); ok {
+			if prev.BodyHash != hash {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"title": "Conflict", "status": 409,
+					"detail": "ese UUID ya se usó con otro cuerpo", "instance": r.URL.Path})
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(prev.Response))
+			return
+		}
+		res, err := srv.IngestCSV(bytes.NewReader(body))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		out, _ := json.Marshal(res)
+		prev, fresh, err := store.SaveIngestBatch(persistence.IngestBatch{
+			UUID: batchUUID, BodyHash: hash, Response: string(out)})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if !fresh && prev != nil && prev.BodyHash == hash {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(prev.Response))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write(out)
 	})
 	mux.HandleFunc("POST /v1/submissions", func(w http.ResponseWriter, _ *http.Request) {
 		n, err := srv.SubmitPending(context.Background())
@@ -172,15 +214,10 @@ func main() {
 		}
 		writeJSON(w, map[string]int{"enviados": n})
 	})
-	mux.HandleFunc("GET /v1/records/{id}/pdf", func(w http.ResponseWriter, r *http.Request) {
-		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil {
-			writeErr(w, fmt.Errorf("identificador de chainRow no válido"))
-			return
-		}
-		f, ok, err := store.ByID(id)
+	mux.HandleFunc("GET /v1/records/{uuid}/pdf", func(w http.ResponseWriter, r *http.Request) {
+		f, ok, err := store.ByUUID(r.PathValue("uuid"))
 		if err != nil || !ok {
-			writeErr(w, fmt.Errorf("no existe el chainRow %d", id))
+			writeErr(w, fmt.Errorf("no existe el registro solicitado"))
 			return
 		}
 		qrEnv := qr.Production

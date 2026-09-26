@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 )
 
 // Server stores keys and opaque envelopes.
@@ -54,9 +53,11 @@ func NewServer(db *sql.DB) (*Server, error) {
 func (s *Server) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/keys/{nif}", s.putKey)
 	mux.HandleFunc("GET /v1/keys/{nif}", s.getKey)
-	mux.HandleFunc("POST /v1/envelopes", s.postEnvelope)
+	// Zalando exception 1: client-provided UUID, idempotent PUT.
+	mux.HandleFunc("PUT /v1/envelopes/{uuid}", s.putEnvelope)
 	mux.HandleFunc("GET /v1/envelopes", s.listEnvelopes)
-	mux.HandleFunc("DELETE /v1/envelopes/{id}", s.deleteEnvelope)
+	// ACK is a domain command (mark delivered), justified :action exception.
+	mux.HandleFunc("POST /v1/envelopes/{uuid}:acknowledge", s.ackEnvelope)
 }
 
 func (s *Server) putKey(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +95,12 @@ func (s *Server) getKey(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"pubkey": pub}})
 }
 
-func (s *Server) postEnvelope(w http.ResponseWriter, r *http.Request) {
+func (s *Server) putEnvelope(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("uuid")
+	if len(id) != 36 {
+		problem(w, 400, "uuid path parameter required", r)
+		return
+	}
 	var env Envelope
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&env); err != nil {
 		problem(w, 400, "unreadable envelope", r)
@@ -109,8 +115,14 @@ func (s *Server) postEnvelope(w http.ResponseWriter, r *http.Request) {
 		problem(w, 429, "envelope rate exceeded for this nif", r)
 		return
 	}
-	id := uuid.NewString()
-	_, err := s.db.Exec(`INSERT INTO relay_envelopes (id, nif, eph_pub, nonce, ciphertext, created_at)
+	// idempotent: same uuid replayed returns 200 regardless of body
+	var exists string
+	err := s.db.QueryRow(`SELECT id FROM relay_envelopes WHERE id=?;`, id).Scan(&exists)
+	if err == nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	_, err = s.db.Exec(`INSERT INTO relay_envelopes (id, nif, eph_pub, nonce, ciphertext, created_at)
 VALUES (?,?,?,?,?,?);`, id, nif,
 		base64.StdEncoding.EncodeToString(env.EphemeralPub),
 		base64.StdEncoding.EncodeToString(env.Nonce),
@@ -120,9 +132,7 @@ VALUES (?,?,?,?,?,?);`, id, nif,
 		problem(w, 500, err.Error(), r)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"id": id}})
 }
 
 // listEnvelopes returns undelivered envelopes for a nif (oldest first).
@@ -160,8 +170,8 @@ WHERE nif=? AND delivered=0 ORDER BY created_at LIMIT 100;`, nif)
 	_ = json.NewEncoder(w).Encode(map[string]any{"data": out})
 }
 
-func (s *Server) deleteEnvelope(w http.ResponseWriter, r *http.Request) {
-	_, err := s.db.Exec(`UPDATE relay_envelopes SET delivered=1 WHERE id=?;`, r.PathValue("id"))
+func (s *Server) ackEnvelope(w http.ResponseWriter, r *http.Request) {
+	_, err := s.db.Exec(`UPDATE relay_envelopes SET delivered=1 WHERE id=?;`, r.PathValue("uuid"))
 	if err != nil {
 		problem(w, 500, err.Error(), r)
 		return

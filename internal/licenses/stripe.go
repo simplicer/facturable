@@ -77,7 +77,7 @@ type stripeEvent struct {
 // license described in its metadata (plan, nifs CSV, days). Replays are
 // idempotent no-ops.
 func (a *API) MountStripe(mux *http.ServeMux, secret string) {
-	mux.HandleFunc("POST /v1/stripe-webhook", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/stripe:webhook", func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		if err != nil {
 			problem(w, 400, "unreadable body", r)

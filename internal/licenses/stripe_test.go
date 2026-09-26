@@ -22,7 +22,7 @@ func firmar(secret, payload string, t time.Time) string {
 
 func postear(t *testing.T, srv *httptest.Server, cuerpo, firma string) *http.Response {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/stripe-webhook", bytes.NewReader([]byte(cuerpo)))
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/stripe:webhook", bytes.NewReader([]byte(cuerpo)))
 	req.Header.Set("Stripe-Signature", firma)
 	resp, err := srv.Client().Do(req)
 	if err != nil {

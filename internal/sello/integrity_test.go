@@ -65,7 +65,7 @@ func TestAnularYEnviar(t *testing.T) {
 		}
 		reloj.avanzar(61 * time.Second)
 	}
-	f, ok, err := srv.Store.ByID(id)
+	f, ok, err := srv.Store.ByUUID(pendUUID(t, srv))
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
@@ -103,4 +103,20 @@ func TestBackupCifradoIdaYVuelta(t *testing.T) {
 	if err := RestoreBackup(bak, dest+".x", "clave-mal"); err == nil {
 		t.Fatal("contraseña errónea aceptada")
 	}
+}
+
+// pendUUID devuelve el uuid de la anulación en el libro (helper del test).
+func pendUUID(t *testing.T, srv *Service) string {
+	t.Helper()
+	filas, err := srv.Store.Ledger(srv.EmisorNIF, 0, 1_000_000, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range filas {
+		if f.Tipo == "ANULACION" {
+			return f.UUID
+		}
+	}
+	t.Fatal("sin anulación en el libro")
+	return ""
 }
