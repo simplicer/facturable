@@ -44,6 +44,9 @@ func main() {
 	}
 	mux := http.NewServeMux()
 	apiLic.Mount(mux)
+	if secret := os.Getenv("STRIPE_WEBHOOK_SECRET"); secret != "" {
+		apiLic.MountStripe(mux, secret)
+	}
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
