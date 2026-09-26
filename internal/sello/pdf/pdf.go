@@ -11,6 +11,21 @@ import (
 	"facturable/internal/sello/qrcode"
 )
 
+// QR geometry per the official FAQ (posibilidad-remisión...): the QR must
+// measure between 30x30 and 40x40 mm (TicketBAI range), sit at the START of
+// the invoice before any content, top-center for portrait layouts, and
+// appear exactly once on the first page.
+const (
+	// QRSizeMM is the printed QR side: the legal MINIMUM (FAQ AEAT: between
+	// 30x30 and 40x40 mm; user decision: always the minimum). Independent
+	// of the symbol version: the module size adapts.
+	QRSizeMM = 30.0
+	// PointsPerMM for A4 PDF geometry (72pt / 25.4mm).
+	PointsPerMM = 72.0 / 25.4
+	// pageWidth of A4 in points.
+	pageWidth = 595
+)
+
 // DatosFactura es todo lo que se imprime en el PDF sellado.
 type DatosFactura struct {
 	EmpresaNombre, EmpresaNIF string
@@ -54,33 +69,35 @@ func Factura(d DatosFactura) ([]byte, error) {
 	c.texto(40, y-6, 11, fmt.Sprintf("Cuota total: %s EUR", d.CuotaTotal))
 	c.texto(40, y-20, 12, fmt.Sprintf("TOTAL: %s EUR", d.ImporteTotal))
 
-	// pie normativo
-	c.texto(40, 60, 10, "VERI*FACTU — Factura verificable en la sede electrónica de la AEAT")
-	c.texto(40, 47, 9, "Registro: "+d.EstadoAEAT+"   CSV: "+d.CSV)
-	c.texto(40, 34, 7, d.URLCotejo)
-
-	// QR abajo a la derecha
+	// QR: primer elemento, arriba centrado junto al margen superior (FAQ:
+	// 30-40mm; user decision: minimum 30mm), before any content.
 	if d.URLCotejo != "" {
 		m, err := qrcode.Encode([]byte(d.URLCotejo))
 		if err != nil {
 			return nil, fmt.Errorf("no se pudo generar el QR: %v", err)
 		}
-		dibujarQR(c, m, 440, 700)
+		qrSidePt := QRSizeMM * PointsPerMM
+		escala := qrSidePt / float64(m.Size)
+		dibujarQR(c, m, int((pageWidth-qrSidePt)/2), 812, escala)
 	}
+
+	// pie normativo
+	c.texto(40, 60, 10, "VERI*FACTU — Factura verificable en la sede electrónica de la AEAT")
+	c.texto(40, 47, 9, "Registro: "+d.EstadoAEAT+"   CSV: "+d.CSV)
+	c.texto(40, 34, 7, d.URLCotejo)
 
 	return c.pdf(), nil
 }
 
-// dibujarQR pinta la matriz como rectángulos de 4 puntos por módulo.
-func dibujarQR(c *contenido, m *qrcode.Matrix, x, yBase int) {
-	escala := 3
+// dibujarQR pinta la matriz con el tamaño de módulo calculado (30mm side).
+func dibujarQR(c *contenido, m *qrcode.Matrix, x, yBase int, escala float64) {
 	for r := 0; r < m.Size; r++ {
 		for col := 0; col < m.Size; col++ {
 			if m.M[r][col] {
-				x0 := float64(x + col*escala)
-				y0 := float64(yBase - r*escala)
+				x0 := float64(x) + float64(col)*escala
+				y0 := float64(yBase) - float64(r+1)*escala
 				fmt.Fprintf(c.b, "%s %s %s %s re f\n",
-					fnum(x0), fnum(y0), fnum(float64(escala)), fnum(float64(escala)))
+					fnum(x0), fnum(y0), fnum(escala), fnum(escala))
 			}
 		}
 	}

@@ -3,6 +3,7 @@ package pdf
 import (
 	"bytes"
 	"regexp"
+	"strconv"
 	"testing"
 )
 
@@ -76,4 +77,58 @@ func TestFacturaPDFSinURL(t *testing.T) {
 	if bytes.Contains(b, []byte(" re f")) {
 		t.Fatal("sin URL no debería dibujar QR")
 	}
+}
+
+// TestQRGeometriaLegal: el QR impreso mide 30mm de lado (mínimo legal),
+// centrado horizontalmente y junto al margen superior (FAQ AEAT).
+func TestQRGeometriaLegal(t *testing.T) {
+	b, err := Factura(ejemplo())
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+) re f`)
+	minX, minY, maxX, maxY := 1e9, 1e9, -1e9, -1e9
+	rects := 0
+	for _, m := range re.FindAllSubmatch(b, -1) {
+		x, y, w := atof(string(m[1])), atof(string(m[2])), atof(string(m[3]))
+		h := atof(string(m[4]))
+		// los módulos del QR son cuadrados: descarta cualquier otro rect
+		if w == 0 || w != h {
+			continue
+		}
+		rects++
+		if x < minX {
+			minX = x
+		}
+		if y < minY {
+			minY = y
+		}
+		if x+w > maxX {
+			maxX = x + w
+		}
+		if y+w > maxY {
+			maxY = y + w
+		}
+	}
+	if rects == 0 {
+		t.Fatal("el PDF no dibuja ningún QR")
+	}
+	sideMM := (maxX - minX) * 25.4 / 72
+	if sideMM < 29.9 || sideMM > 30.1 {
+		t.Fatalf("lado del QR = %.2fmm, want 30.00mm", sideMM)
+	}
+	if (maxY-minY)*25.4/72 < 29.9 {
+		t.Fatalf("alto del QR = %.2fmm", (maxY-minY)*25.4/72)
+	}
+	if minX < 235 || minX > 265 {
+		t.Fatalf("QR no centrado: minX=%.1f (queríamos ~252)", minX)
+	}
+	if maxY < 800 || maxY > 815 {
+		t.Fatalf("QR no está arriba: maxY=%.1f (queríamos ~812)", maxY)
+	}
+}
+
+func atof(s string) float64 {
+	f, _ := strconv.ParseFloat(s, 64)
+	return f
 }
