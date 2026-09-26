@@ -11,11 +11,15 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +31,8 @@ import (
 	"facturable/internal/sello/persistencia"
 	"facturable/internal/verifactu/application"
 	"facturable/internal/verifactu/infrastructure/soap"
+
+	sslmatep12 "software.sslmate.com/src/go-pkcs12"
 )
 
 func main() {
@@ -66,6 +72,8 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/certificado", guardarCertificado)
+	mux.HandleFunc("GET /v1/probar-conexion", probarConexion)
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"status": "ok", "app": "facturable-sello", "modo": modo})
 	})
@@ -215,4 +223,70 @@ func writeErr(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"title": "Error del agente", "status": 400, "detail": err.Error()})
+}
+
+// onboarding de certificado -------------------------------------------------
+
+// guardarCertificado recibe un P12 por multipart y lo instala (0600) para
+// el próximo arranque. Contraseña por formulario aparte: nunca se guarda.
+func guardarCertificado(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		writeErr(w, fmt.Errorf("no se pudo leer el formulario: %v", err))
+		return
+	}
+	f, _, err := r.FormFile("certificado")
+	if err != nil {
+		writeErr(w, fmt.Errorf("falta el fichero 'certificado' (P12/PFX)"))
+		return
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, 4<<20))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if _, _, err := sslmatep12.Decode(raw, r.FormValue("password")); err != nil {
+		writeErr(w, fmt.Errorf("el certificado no es un P12 válido o la contraseña no es correcta: %v", err))
+		return
+	}
+	if err := os.MkdirAll("var/certificados", 0o700); err != nil {
+		writeErr(w, err)
+		return
+	}
+	dest := filepath.Join("var/certificados", "empresa.p12")
+	if err := os.WriteFile(dest, raw, 0o600); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"guardado": dest,
+		"nota":     "reinicia el agente con SELLO_CERT_P12=" + dest + " para remitir a la AEAT",
+	})
+}
+
+// probarConexion verifica carga del certificado y handshake TLS contra el
+// entorno de pruebas de la AEAT (prewww1). Diagnóstico de onboarding.
+func probarConexion(w http.ResponseWriter, _ *http.Request) {
+	resultado := map[string]any{}
+	p12 := os.Getenv("SELLO_CERT_P12")
+	if p12 != "" {
+		if _, err := soap.LoadP12(p12, os.Getenv("SELLO_CERT_PASS")); err != nil {
+			resultado["certificado"] = "error: " + err.Error()
+			writeErr(w, fmt.Errorf("%v", resultado["certificado"]))
+			return
+		}
+		resultado["certificado"] = "ok"
+	} else {
+		resultado["certificado"] = "no configurado (modo simulado)"
+	}
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp",
+		"prewww1.aeat.es:443", &tls.Config{MinVersion: tls.VersionTLS12})
+	if err != nil {
+		resultado["aeat_pruebas"] = "error: " + err.Error()
+		writeJSON(w, resultado)
+		return
+	}
+	_ = conn.Close()
+	resultado["aeat_pruebas"] = "ok"
+	writeJSON(w, resultado)
 }

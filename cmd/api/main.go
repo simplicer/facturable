@@ -3,12 +3,16 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 
+	"facturable/internal/licencias"
 	"facturable/internal/plataforma"
+
+	_ "modernc.org/sqlite"
 )
 
 func main() {
@@ -22,7 +26,24 @@ func main() {
 		fmt.Fprintln(os.Stderr, "log:", err)
 		os.Exit(1)
 	}
+	db, err := sql.Open("sqlite", cfg.API.Database)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "bd:", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+	priv, _, err := licencias.CargarOGenerarClave("etc/licencias.ed25519")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "claves:", err)
+		os.Exit(1)
+	}
+	apiLic, err := licencias.NuevaAPI(db, priv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "licencias:", err)
+		os.Exit(1)
+	}
 	mux := http.NewServeMux()
+	apiLic.Mount(mux)
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
