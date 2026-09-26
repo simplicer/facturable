@@ -55,8 +55,8 @@ func TestStripeWebhookEmiteLicenciaIdempotente(t *testing.T) {
 	}
 	// firma inválida → 400
 	r = postear(t, ws, evento, "t=1,v1=deadbeef")
-	if r.StatusCode != 400 {
-		t.Fatalf("firma mala = %d, want 400", r.StatusCode)
+	if r.StatusCode != 401 {
+		t.Fatalf("firma mala = %d, want 401 (sin reintentos)", r.StatusCode)
 	}
 	// evento irrelevante → 200 ignored
 	r = postear(t, ws, `{"id":"evt_2","type":"customer.updated","data":{"object":{}}}`,

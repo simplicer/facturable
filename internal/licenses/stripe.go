@@ -46,8 +46,8 @@ func VerifyStripeSignature(secret, payload, header string, now time.Time) bool {
 	if err != nil {
 		return false
 	}
-	if now.Sub(time.Unix(sec, 0)) > 5*time.Minute {
-		return false // replay too old
+	if d := now.Sub(time.Unix(sec, 0)); d > 5*time.Minute || d < -5*time.Minute {
+		return false // replay outside tolerance, both directions (audit)
 	}
 	mac := hmac.New(sha256.New, []byte(secret))
 	fmt.Fprintf(mac, "%s.%s", ts, payload)
@@ -84,7 +84,10 @@ func (a *API) MountStripe(mux *http.ServeMux, secret string) {
 			return
 		}
 		if !VerifyStripeSignature(secret, string(body), r.Header.Get("Stripe-Signature"), a.ahora()) {
-			problem(w, 400, "invalid stripe signature", r)
+			// 401 sin detalle: evita fingerprinting y no incentiva reintentos
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"title": "Unauthorized", "status": 401})
 			return
 		}
 		var ev stripeEvent

@@ -8,13 +8,31 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 // Server stores keys and opaque envelopes.
-type Server struct{ db *sql.DB }
+type Server struct {
+	db   *sql.DB
+	mu   sync.Mutex
+	hits map[string]int
+	hour time.Time
+}
+
+// Allow caps anonymous envelope spam per NIF (audit high).
+func (s *Server) Allow(nif string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().Truncate(time.Hour)
+	if !s.hour.Equal(now) {
+		s.hour, s.hits = now, map[string]int{}
+	}
+	s.hits[nif]++
+	return s.hits[nif] <= 60
+}
 
 // NewServer migrates the relay tables.
 func NewServer(db *sql.DB) (*Server, error) {
@@ -85,6 +103,10 @@ func (s *Server) postEnvelope(w http.ResponseWriter, r *http.Request) {
 	nif := r.URL.Query().Get("nif")
 	if nif == "" {
 		problem(w, 422, "nif query parameter required", r)
+		return
+	}
+	if !s.Allow(nif) {
+		problem(w, 429, "envelope rate exceeded for this nif", r)
 		return
 	}
 	id := uuid.NewString()

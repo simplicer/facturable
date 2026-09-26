@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"facturable/internal/licenses"
@@ -121,8 +122,18 @@ func main() {
 		}
 	}()
 
+	pin := os.Getenv("SELLO_PIN")
+	certTries := newRateLimiter(5, time.Minute)
 	mux := http.NewServeMux()
-	mux.HandleFunc("PUT /v1/certificate", saveCertificate)
+	mux.HandleFunc("PUT /v1/certificates", func(w http.ResponseWriter, r *http.Request) {
+		if pin != "" && !certTries.allow(r.RemoteAddr) {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]any{"title": "Too Many Requests", "status": 429, "detail": "demasiados intentos; espera un minuto"})
+			return
+		}
+		saveCertificate(w, r)
+	})
 	mux.HandleFunc("GET /v1/connectivity", checkConnectivity)
 	mux.HandleFunc("GET /v1/declaration", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -229,9 +240,52 @@ func main() {
 		writeJSON(w, map[string]any{"data": filas})
 	})
 
+	// Auth local (audit high): SELLO_PIN protege /v1/* con Bearer; status y
+	// connectivity quedan abiertos para diagnóstico.
+	handler := withPIN(pin, mux)
+
 	addr := env("SELLO_LISTEN", "127.0.0.1:8787")
 	log.Printf("sello escuchando en http://%s (modo %s)", addr, modo)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Fatal(http.ListenAndServe(addr, handler))
+}
+
+// rateLimiter simple de ventana fija por clave (audit: límite subidas cert).
+type rateLimiter struct {
+	mu     sync.Mutex
+	window time.Duration
+	max    int
+	seen   map[string]int
+	start  map[string]time.Time
+}
+
+func newRateLimiter(max int, window time.Duration) *rateLimiter {
+	return &rateLimiter{window: window, max: max, seen: map[string]int{}, start: map[string]time.Time{}}
+}
+
+func (r *rateLimiter) allow(key string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	if st, ok := r.start[key]; !ok || now.Sub(st) > r.window {
+		r.start[key], r.seen[key] = now, 0
+	}
+	r.seen[key]++
+	return r.seen[key] <= r.max
+}
+
+// withPIN exige Authorization: Bearer <SELLO_PIN> en las rutas /v1/*.
+func withPIN(pin string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if pin != "" && strings.HasPrefix(r.URL.Path, "/v1/") &&
+			r.Header.Get("Authorization") != "Bearer "+pin {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"title": "Unauthorized", "status": 401, "detail": "PIN ausente o incorrecto", "instance": r.URL.Path})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // construirRemisor devuelve el remisor AEAT real cuando hay certificado, o

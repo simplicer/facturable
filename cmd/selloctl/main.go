@@ -104,16 +104,12 @@ func main() {
 	}
 }
 
+// readPriv is FAIL-CLOSED (audit): a release is only signed with an
+// explicitly generated key; nothing is created on the fly.
 func readPriv(path string) (ed25519.PrivateKey, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		// create on the fly for development releases
-		priv, pub, err := licenses.LoadOrCreateKey(path)
-		if err != nil {
-			return nil, err
-		}
-		_ = os.WriteFile(path+".pub", pub, 0o644)
-		return priv, nil
+		return nil, fmt.Errorf("release key %s not found; generate it first with: selloctl keys -out %s", path, path)
 	}
 	if len(raw) == ed25519.PrivateKeySize {
 		return ed25519.PrivateKey(raw), nil

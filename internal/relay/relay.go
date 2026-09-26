@@ -8,6 +8,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
@@ -25,9 +26,24 @@ type Envelope struct {
 // ErrBadEnvelope marks malformed or undecryptable envelopes.
 var ErrBadEnvelope = errors.New("invalid envelope")
 
-// Seal encrypts plaintext to the agent public key (X25519 ECDH shared
-// secret, sha256 of the shared point, AES-256-GCM). Senders use it; the
-// server never can.
+// hkdfSHA256 derives a 32-byte key from the shared secret with context
+// info + salt (audit: raw sha256(shared) was too weak a KDF).
+func hkdfSHA256(shared, salt, info []byte) []byte {
+	prk := hmac.New(sha256.New, salt)
+	prk.Write(shared)
+	okm := make([]byte, 32)
+	tm := hmac.New(sha256.New, prk.Sum(nil))
+	tm.Write(info)
+	tm.Write([]byte{1})
+	copy(okm, tm.Sum(nil))
+	return okm
+}
+
+// relayInfo is the KDF context binding envelopes to this protocol.
+var relayInfo = []byte("facturable-relay-v1/x25519-aes256gcm")
+
+// Seal encrypts plaintext to the agent public key (X25519 ECDH, HKDF,
+// AES-256-GCM). Senders use it; the server never can.
 func Seal(agentPub *ecdh.PublicKey, plaintext []byte) (*Envelope, error) {
 	eph, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
@@ -37,8 +53,8 @@ func Seal(agentPub *ecdh.PublicKey, plaintext []byte) (*Envelope, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrBadEnvelope, err)
 	}
-	key := sha256.Sum256(shared)
-	block, err := aes.NewCipher(key[:])
+	key := hkdfSHA256(shared, eph.PublicKey().Bytes(), relayInfo)
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
@@ -70,8 +86,8 @@ func Open(agentPriv *ecdh.PrivateKey, env *Envelope) ([]byte, error) {
 	if err != nil {
 		return nil, ErrBadEnvelope
 	}
-	key := sha256.Sum256(shared)
-	block, err := aes.NewCipher(key[:])
+	key := hkdfSHA256(shared, env.EphemeralPub, relayInfo)
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}

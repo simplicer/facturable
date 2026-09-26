@@ -6,10 +6,12 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 go build -o /out/api ./cmd/api && \
     printf '#!/bin/sh\nwget -qO- http://127.0.0.1:8080/status || exit 1\n' > /out/api-healthcheck && chmod +x /out/api-healthcheck
 FROM alpine:3.20
-RUN apk add --no-cache wget ca-certificates
+RUN apk add --no-cache wget ca-certificates && adduser -D -u 1001 app
 WORKDIR /app
+RUN mkdir -p /app/var && chown -R app /app
 COPY --from=build /out/api /app/bin/api
 COPY --from=build /out/api-healthcheck /app/bin/api-healthcheck
 COPY etc /app/etc
 EXPOSE 8080
+USER app
 ENTRYPOINT ["/app/bin/api"]
