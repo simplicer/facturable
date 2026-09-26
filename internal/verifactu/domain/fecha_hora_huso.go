@@ -38,7 +38,17 @@ func NewFechaHoraHuso(raw string) (FechaHoraHuso, error) {
 
 // NewFechaHoraHusoFromTime wraps an injected instant (from the application
 // clock port), rendering it with its offset.
+// NewFechaHoraHusoFromTime renders the instant with a numeric offset
+// (+hh:mm). A UTC instant (which formats as 'Z') is converted to
+// Europe/Madrid so the wire value always carries a numeric offset, as the
+// AEAT schema requires (audit finding: containers run in UTC).
 func NewFechaHoraHusoFromTime(stamp time.Time) FechaHoraHuso {
+	if stamp.Location() == time.UTC {
+		madrid, err := time.LoadLocation("Europe/Madrid")
+		if err == nil {
+			stamp = stamp.In(madrid)
+		}
+	}
 	return FechaHoraHuso{stamp: stamp, raw: stamp.Format(fechaHoraHusoLayout)}
 }
 

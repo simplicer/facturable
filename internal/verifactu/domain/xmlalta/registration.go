@@ -12,6 +12,12 @@ type InvoiceID struct {
 	ExpeditionDate string `xml:"sum1:FechaExpedicionFactura"` // DD-MM-AAAA
 }
 
+// RectifiedID identifies a rectified invoice inside R1-R5.
+type RectifiedID struct {
+	Series string `xml:"sum1:NumSerieFacturaRectificada"`
+	Date   string `xml:"sum1:FechaExpedicionFacturaRectificada"` // DD-MM-AAAA
+}
+
 // Recipient is one invoice recipient (IDDestinatario).
 type Recipient struct {
 	Name  string `xml:"sum1:NombreRazon"`
@@ -62,9 +68,11 @@ type RegistrationRecord struct {
 	Version              string          `xml:"sum1:IDVersion"` // fixed "1.0"
 	InvoiceID            InvoiceID       `xml:"sum1:IDFactura"`
 	IssuerName           string          `xml:"sum1:NombreRazonEmisor"`
-	Subsanacion          string          `xml:"sum1:Subsanacion,omitempty"`   // optional "S"
-	PreviousRejection    string          `xml:"sum1:RechazoPrevio,omitempty"` // optional "S"/"X"
-	InvoiceType          string          `xml:"sum1:TipoFactura"`             // F1..R5
+	Subsanacion          string          `xml:"sum1:Subsanacion,omitempty"`                                    // optional "S"
+	PreviousRejection    string          `xml:"sum1:RechazoPrevio,omitempty"`                                  // optional "S"/"X"
+	InvoiceType          string          `xml:"sum1:TipoFactura"`                                              // F1..R5
+	RectifiedType        string          `xml:"sum1:TipoRectificativa,omitempty"`                              // S/I (R1-R5)
+	RectifiedInvoices    *[]RectifiedID  `xml:"sum1:FacturasRectificadas>sum1:IDFacturaRectificada,omitempty"` // pointer: nil omits the parent (encoding/xml ignores omitempty in chains)
 	OperationDescription string          `xml:"sum1:DescripcionOperacion"`
 	Recipients           []Recipient     `xml:"sum1:Destinatarios>sum1:IDDestinatario,omitempty"`
 	Breakdown            []BreakdownLine `xml:"sum1:Desglose>sum1:DetalleDesglose,omitempty"` // 1..MaxBreakdownLines

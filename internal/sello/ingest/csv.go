@@ -97,6 +97,17 @@ func ReadCSV(r io.Reader) (drafts []Draft, errores []RowError) {
 		}
 
 		series := strings.TrimSpace(row[index["numero_serie"]])
+		if d, ok := bySeries[series]; ok {
+			// same series: every row must repeat identical header fields,
+			// otherwise the silent merge would alter the invoice
+			if d.Date != strings.TrimSpace(row[index["fecha"]]) ||
+				d.Tipo != strings.ToUpper(strings.TrimSpace(row[index["tipo"]])) ||
+				d.ClientNIF != strings.TrimSpace(row[index["nif_cliente"]]) {
+				errores = append(errores, RowError{Fila: rowNum, Campo: "numero_serie",
+					Detalle: fmt.Sprintf("la serie %s ya apareció con otra fecha, tipo o cliente (audit fix: no se fusiona en silencio)", series)})
+				continue
+			}
+		}
 		d, ok := bySeries[series]
 		if !ok {
 			d = &Draft{

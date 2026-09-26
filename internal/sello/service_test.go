@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"facturable/internal/sello/ingest"
 	"facturable/internal/sello/persistence"
 	"facturable/internal/verifactu/application"
 )
@@ -26,6 +27,11 @@ func (r *fakeSubmitter) Remitir(_ context.Context, soapXML string) (application.
 
 func extractSeries(xml string) []string {
 	var out []string
+	for _, trozo := range strings.Split(xml, "<sum1:NumSerieFacturaAnulada>") {
+		if i := strings.Index(trozo, "</sum1:NumSerieFacturaAnulada>"); i > 0 && !strings.Contains(trozo[:i], "<") {
+			out = append(out, trozo[:i])
+		}
+	}
 	for _, trozo := range strings.Split(xml, "<sum1:NumSerieFactura>") {
 		if i := strings.Index(trozo, "</sum1:NumSerieFactura>"); i > 0 && !strings.Contains(trozo[:i], "<") {
 			out = append(out, trozo[:i])
@@ -82,25 +88,18 @@ func TestCircuitoCompleto(t *testing.T) {
 		t.Fatalf("ingesta = %+v", res)
 	}
 
-	// 2) Envío: control de flujo AEAT = un sobre por ventana de 60 s.
+	// 2) Envío en LOTE: ambos pendientes caben en un sobre (≤1000, spec).
 	enviados, err := srv.SubmitPending(context.Background())
 	if err != nil {
 		t.Fatalf("SubmitPending(): %v", err)
 	}
-	if enviados != 1 || len(remisor.recibidos) != 1 {
-		t.Fatalf("primer ciclo: enviados = %d, remisiones = %d", enviados, len(remisor.recibidos))
+	if enviados != 2 || len(remisor.recibidos) != 1 {
+		t.Fatalf("primer ciclo: enviados = %d, sobres = %d (want 2/1)", enviados, len(remisor.recibidos))
 	}
-	// Antes de 60 s no debe enviar nada más.
-	if n, _ := srv.SubmitPending(context.Background()); n != 0 {
-		t.Fatalf("segundo ciclo inmediato envió %d, want 0 (espera de flujo)", n)
-	}
+	// Sin pendientes: aunque pase la ventana, no envía.
 	reloj.avanzar(61 * time.Second)
-	enviados, err = srv.SubmitPending(context.Background())
-	if err != nil {
-		t.Fatalf("SubmitPending() tras espera: %v", err)
-	}
-	if enviados != 1 || len(remisor.recibidos) != 2 {
-		t.Fatalf("segundo ciclo: enviados = %d, remisiones = %d", enviados, len(remisor.recibidos))
+	if n, _ := srv.SubmitPending(context.Background()); n != 0 {
+		t.Fatalf("sin pendientes envió %d", n)
 	}
 
 	// 3) El libro refleja estado correcto y CSV persistido.
@@ -150,5 +149,24 @@ func TestCircuitoIngestaConErroresNoRompeLibro(t *testing.T) {
 	pend, _ := store.Pending("B72877814", 10)
 	if len(pend) != 0 {
 		t.Fatal("un borrador inválido no debe entrar en el libro")
+	}
+}
+
+func TestIngestDraftsDedupePorSerie(t *testing.T) {
+	srv, _, _, _ := newTestService(t)
+	d := []ingest.Draft{{
+		Series: "DUP-0001", Date: "05-01-2027", Tipo: "F1", Description: "x",
+		Breakdowns: []ingest.BreakdownDraft{{TaxRate: "21", Base: "10.00", Fee: "2.10"}},
+	}}
+	r1, err := srv.IngestDrafts(d)
+	if err != nil || r1.Sellados != 1 {
+		t.Fatalf("primera ingesta = %+v %v", r1, err)
+	}
+	r2, err := srv.IngestDrafts(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2.Sellados != 0 || len(r2.Errores) != 1 {
+		t.Fatalf("webhook repetido = %+v (want 0 sellados, 1 aviso)", r2)
 	}
 }

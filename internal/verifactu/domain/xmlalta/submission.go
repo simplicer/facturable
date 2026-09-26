@@ -8,6 +8,8 @@
 package xmlalta
 
 import (
+	"bytes"
+
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -175,4 +177,51 @@ type obligadoEmision struct {
 type registroFactura struct {
 	Alta      *RegistrationRecord `xml:"sum1:RegistroAlta,omitempty"`
 	Anulacion *CancellationRecord `xml:"sum1:RegistroAnulacion,omitempty"`
+}
+
+// SplitRecordBlocks extracts the raw <sum:RegistroFactura> blocks of an
+// envelope produced by this same package (fixed prefixes, so literal
+// string handling is exact; decode/re-encode would rewrite namespaces).
+func SplitRecordBlocks(soapXML string) []string {
+	const open, close = "<sum:RegistroFactura>", "</sum:RegistroFactura>"
+	var out []string
+	for {
+		i := strings.Index(soapXML, open)
+		if i < 0 {
+			break
+		}
+		j := strings.Index(soapXML[i:], close)
+		if j < 0 {
+			break
+		}
+		out = append(out, soapXML[i:i+j+len(close)])
+		soapXML = soapXML[i+j+len(close):]
+	}
+	return out
+}
+
+// BatchFromBlocks assembles a fresh SOAP envelope from raw record blocks
+// (as returned by SplitRecordBlocks) for one obligado tributario.
+func BatchFromBlocks(issuerName, issuerNIF string, blocks []string) (string, error) {
+	var buf bytes.Buffer
+	buf.WriteString(xml.Header)
+	buf.WriteString(`<soapenv:Envelope xmlns:soapenv="` + NamespaceSOAPEnvelope + `" xmlns:sum="` + NamespaceSuministroLR + `" xmlns:sum1="` + NamespaceSuministroInfo + `" xmlns:xd="` + NamespaceXMLDSig + `">`)
+	buf.WriteString("<soapenv:Header/><soapenv:Body><sum:RegFactuSistemaFacturacion><sum:Cabecera><sum1:ObligadoEmision><sum1:NombreRazon>")
+	buf.WriteString(xmlEscapeText(issuerName))
+	buf.WriteString("</sum1:NombreRazon><sum1:NIF>")
+	buf.WriteString(xmlEscapeText(issuerNIF))
+	buf.WriteString("</sum1:NIF></sum1:ObligadoEmision></sum:Cabecera>")
+	for _, b := range blocks {
+		buf.WriteString("<sum:RegistroFactura>")
+		buf.WriteString(b[len("<sum:RegistroFactura>") : len(b)-len("</sum:RegistroFactura>")])
+		buf.WriteString("</sum:RegistroFactura>")
+	}
+	buf.WriteString("</sum:RegFactuSistemaFacturacion></soapenv:Body></soapenv:Envelope>")
+	return buf.String(), nil
+}
+
+// xmlEscapeText escapes the five XML entities for raw string assembly.
+func xmlEscapeText(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&apos;")
+	return r.Replace(s)
 }

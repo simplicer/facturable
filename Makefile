@@ -1,4 +1,3 @@
-PHP := echo
 GO := go
 
 .PHONY: up down build test test-unit lint run-sello run-api clean compose-config

@@ -165,6 +165,18 @@ type PendingRecord struct {
 // Pending devuelve los registros aún sin remitir (sin intento válido).
 // Los rechazos no reintentables requieren subsanación manual: no se
 // reenvían solos.
+// HasSeries reports whether a record with that series already exists for
+// the taxpayer (relay/API idempotency: repeated webhooks must not stamp
+// twice).
+func (s *Store) HasSeries(nif, series string) (bool, error) {
+	var one int
+	err := s.db.QueryRow(`SELECT 1 FROM registros WHERE nif=? AND series=? LIMIT 1;`, nif, series).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (s *Store) Pending(nif string, limite int) ([]PendingRecord, error) {
 	rows, err := s.db.Query(`
 SELECT r.id, r.series, r.fecha, r.xml

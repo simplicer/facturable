@@ -12,6 +12,7 @@ import (
 	"facturable/internal/sello/persistence"
 	"facturable/internal/verifactu/application"
 	"facturable/internal/verifactu/domain"
+	"facturable/internal/verifactu/domain/xmlalta"
 )
 
 // Service orquesta el ciclo completo del agente.
@@ -71,6 +72,13 @@ func (s *Service) IngestCSV(r io.Reader) (*IngestResult, error) {
 func (s *Service) IngestDrafts(drafts []ingest.Draft) (*IngestResult, error) {
 	res := &IngestResult{}
 	for i, d := range drafts {
+		// idempotencia relay/API: serie ya sellada → aviso, no doble sello
+		if dup, err := s.Store.HasSeries(s.EmisorNIF, d.Series); err == nil && dup {
+			res.Errores = append(res.Errores, ingest.RowError{
+				Fila: i + 1, Campo: "numero_serie",
+				Detalle: fmt.Sprintf("la factura %s ya consta en el libro (webhook repetido ignorado)", d.Series)})
+			continue
+		}
 		estado, err := s.chainState()
 		if err != nil {
 			return res, err
@@ -111,7 +119,7 @@ func (s *Service) Cancel(series, fecha string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := application.SellarAnulacion(s.EmisorNIF, series, fecha, s.Sistema, estado, time.Now())
+	res, err := application.SellarAnulacion(s.EmisorNIF, s.EmisorNombre, series, fecha, s.Sistema, estado, time.Now())
 	if err != nil {
 		return 0, err
 	}
@@ -124,9 +132,13 @@ func (s *Service) Cancel(series, fecha string) (int64, error) {
 	return id, err
 }
 
-// SubmitPending remite los registros pendientes respetando el control
-// de flujo (espera 60 s o acumulado de lote) y registra cada respuesta.
+// SubmitPending remite los pendientes en LOTES (hasta 1.000 registros por
+// sobre, un obligado por lote: spec AEAT §6.4.4.1), respetando el control
+// de flujo entre envíos y registrando la respuesta por registro.
 func (s *Service) SubmitPending(ctx context.Context) (int, error) {
+	if !s.Flujo.PuedeEnviar(1000) {
+		return 0, nil
+	}
 	pendientes, err := s.Store.Pending(s.EmisorNIF, 1000)
 	if err != nil {
 		return 0, err
@@ -134,23 +146,32 @@ func (s *Service) SubmitPending(ctx context.Context) (int, error) {
 	if len(pendientes) == 0 {
 		return 0, nil
 	}
-	// El control de flujo de la AEAT obliga a esperar TiempoEsperaEnvio
-	// (60 s inicial) entre envíos: el agente envía un sobre por ciclo y su
-	// planificador (60 s) vuelve a llamar. El acumulado a lote llegará con
-	// el envío agrupado (véase PLAN-DESARROLLO T-2.5 mejora).
-	if !s.Flujo.PuedeEnviar(len(pendientes)) {
-		return 0, nil
+
+	blocks := make([]string, 0, len(pendientes))
+	for _, p := range pendientes {
+		bloques := xmlalta.SplitRecordBlocks(p.XML)
+		if len(bloques) == 0 {
+			return 0, fmt.Errorf("registro %s ilegible: sin bloque RegistroFactura", p.Serie)
+		}
+		blocks = append(blocks, bloques...)
 	}
-	p := pendientes[0]
-	lote, err := s.Remisor.Remitir(ctx, p.XML)
+	sobre, err := xmlalta.BatchFromBlocks(s.EmisorNombre, s.EmisorNIF, blocks)
 	if err != nil {
-		return 0, fmt.Errorf("envío de %s: %w", p.Serie, err)
-	}
-	s.Flujo.RegistrarEnvio(lote)
-	if err := s.recordResponse(p, lote); err != nil {
 		return 0, err
 	}
-	return 1, nil
+	lote, err := s.Remisor.Remitir(ctx, sobre)
+	if err != nil {
+		return 0, fmt.Errorf("envío de lote: %w", err)
+	}
+	s.Flujo.RegistrarEnvio(lote)
+	enviados := 0
+	for _, p := range pendientes {
+		if err := s.recordResponse(p, lote); err != nil {
+			return enviados, err
+		}
+		enviados++
+	}
+	return enviados, nil
 }
 
 func (s *Service) recordResponse(p persistence.PendingRecord, lote application.RespuestaLote) error {

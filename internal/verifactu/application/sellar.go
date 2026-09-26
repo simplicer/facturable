@@ -23,7 +23,15 @@ type InvoiceDraft struct {
 	Series, Date, Tipo, Description string
 	ClientNIF, ClientName           string
 	Desgloses                       []BreakdownDraft
+	// Rectificativa R1 (by difference): negative breakdowns/amounts and the
+	// identified rectified invoices. Empty for ordinary F1.
+	Rectificadas  []RectificadaRef
+	Subsanacion   bool // re-stamp after an AEAT rejection (Subsanacion=S)
+	RechazoPrevio bool
 }
+
+// RectificadaRef identifies an already-issued invoice being rectified.
+type RectificadaRef struct{ Series, Date string }
 
 // BreakdownDraft es una línea de IVA del borrador.
 type BreakdownDraft struct {
@@ -150,6 +158,23 @@ func SellarAlta(emisorNIF, emisorNombre string, b InvoiceDraft, sis SistemaLocal
 	reg.InvoiceID = xmlalta.InvoiceID{IssuerID: nif.Value(), Number: series.Value(), ExpeditionDate: fecha.Date()}
 	reg.IssuerName = emisorNombre
 	reg.InvoiceType = tipo.String()
+	if len(b.Rectificadas) > 0 {
+		if !tipo.IsRectificativa() {
+			return nil, fmt.Errorf("la factura %s identifica rectificadas pero su tipo no es R1-R5", b.Series)
+		}
+		reg.RectifiedType = "I" // por diferencia
+		lista := make([]xmlalta.RectifiedID, 0, len(b.Rectificadas))
+		for _, r := range b.Rectificadas {
+			lista = append(lista, xmlalta.RectifiedID{Series: r.Series, Date: r.Date})
+		}
+		reg.RectifiedInvoices = &lista
+	}
+	if b.Subsanacion {
+		reg.Subsanacion = "S"
+	}
+	if b.RechazoPrevio {
+		reg.PreviousRejection = "S"
+	}
 	reg.OperationDescription = b.Description
 	if b.ClientNIF != "" {
 		if _, err := domain.NewNIF(b.ClientNIF); err != nil {
@@ -260,9 +285,15 @@ func toCents(raw string) (int, error) {
 			return 0, fmt.Errorf("%q no es un importe válido", raw)
 		}
 	}
-	negativo := enteros < 0
+	// sign applied ONCE at the end (audit fix: -5.25 produced -475 before)
+	negativo := strings.HasPrefix(strings.TrimSpace(raw), "-")
 	if negativo {
-		enteros, dec = -enteros, -dec
+		if enteros < 0 {
+			enteros = -enteros
+		}
+		if dec < 0 {
+			dec = -dec
+		}
 	}
 	total := enteros*100 + dec
 	if negativo {

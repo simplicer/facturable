@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"facturable/internal/licenses"
 	"facturable/internal/sello/declaration"
 	"facturable/internal/sello/pdf"
 	"facturable/internal/verifactu/domain/qr"
@@ -49,6 +51,34 @@ func main() {
 	defer store.Close()
 
 	remisor, modo := construirRemisor()
+
+	// license gate (audit #11): stamping requires a valid signed license
+	// when LICENSE_TOKEN is configured; dev without it stays open
+	var licPub ed25519.PublicKey
+	licencia := func() (bool, string) {
+		tok := os.Getenv("LICENSE_TOKEN")
+		if tok == "" {
+			return true, "" // desarrollo sin licencias
+		}
+		if licPub == nil {
+			raw, err := os.ReadFile(env("LICENSE_PUB", "etc/licencias.ed25519.pub"))
+			if err != nil {
+				return false, "clave pública de licencias no disponible"
+			}
+			licPub = ed25519.PublicKey(raw)
+		}
+		lic, err := licenses.Verify(licPub, tok)
+		if err != nil {
+			return false, err.Error()
+		}
+		if !lic.AuthorizesNIF(nif) {
+			return false, "la licencia no autoriza este NIF"
+		}
+		if err := licenses.Gate(lic, time.Now(), licenses.ActionStampNew); err != nil {
+			return false, err.Error()
+		}
+		return true, ""
+	}
 	srv := &sello.Service{
 		Store: store, Remisor: remisor,
 		Flujo:     application.NewControlFlujo(time.Now),
@@ -109,6 +139,13 @@ func main() {
 		writeJSON(w, map[string]any{"status": "ok", "app": "facturable-sello", "modo": modo})
 	})
 	mux.HandleFunc("POST /v1/records", func(w http.ResponseWriter, r *http.Request) {
+		if ok, motivo := licencia(); !ok {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusPaymentRequired)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"title": "licencia", "status": 402, "detail": motivo})
+			return
+		}
 		res, err := srv.IngestCSV(r.Body)
 		if err != nil {
 			writeErr(w, err)
@@ -135,7 +172,11 @@ func main() {
 			writeErr(w, fmt.Errorf("no existe el chainRow %d", id))
 			return
 		}
-		urlQR, err := qr.VerificationURL(qr.Production, qr.Query{
+		qrEnv := qr.Production
+		if os.Getenv("SELLO_AEAT") != "produccion" {
+			qrEnv = qr.Testing
+		}
+		urlQR, err := qr.VerificationURL(qrEnv, qr.Query{
 			NIF: f.NIF, InvoiceNumber: f.Serie, ExpeditionDate: f.Date, TotalAmount: f.Importe,
 		})
 		if err != nil {
@@ -204,9 +245,17 @@ func construirRemisor() (application.Remisor, string) {
 	if err != nil {
 		log.Fatalf("certificado: %v", err)
 	}
+	produccion := os.Getenv("SELLO_AEAT") == "produccion"
 	url := soap.Pruebas.VerifactuPersona
-	if os.Getenv("SELLO_AEAT") == "produccion" {
+	if produccion {
 		url = soap.Produccion.VerifactuPersona
+	}
+	if os.Getenv("SELLO_CERT_TIPO") == "sello" { // seal certs hit www10
+		if produccion {
+			url = soap.Produccion.VerifactuSello
+		} else {
+			url = soap.Pruebas.VerifactuSello
+		}
 	}
 	return soap.NewCliente(url, cert), "aeat"
 }

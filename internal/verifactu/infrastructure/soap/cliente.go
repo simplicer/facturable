@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -50,12 +49,10 @@ type Cliente struct {
 // NewCliente construye el cliente para una URL de entorno. El certificado
 // puede ser de persona física/jurídica (www1) o de sello (www10).
 func NewCliente(url string, cert tls.Certificate) *Cliente {
-	pool := x509.NewCertPool()
-	if len(cert.Certificate) > 0 {
-		if leaf, err := x509.ParseCertificate(cert.Certificate[0]); err == nil {
-			pool.AddCert(leaf)
-		}
-	}
+	// IMPORTANT: the client certificate goes in Certificates (mTLS); the
+	// trust anchors stay the SYSTEM pool (nil RootCAs). Pinning the server
+	// leaf into RootCAs here made every real submission fail with
+	// "x509: unknown authority" (external audit finding, fixed).
 	return &Cliente{
 		url: url,
 		http: &http.Client{
@@ -63,7 +60,6 @@ func NewCliente(url string, cert tls.Certificate) *Cliente {
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
 					Certificates: []tls.Certificate{cert},
-					RootCAs:      pool,
 					MinVersion:   tls.VersionTLS12,
 				},
 			},

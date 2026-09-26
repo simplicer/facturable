@@ -11,7 +11,7 @@ import (
 // SellarAnulacion genera el chainRow de anulación de una factura emitida y
 // lo encadena como cualquier otro chainRow (FAQ AEAT: altas y anulaciones
 // comparten la MISMA cadena, en orderSeen de generación).
-func SellarAnulacion(emisorNIF string, series, fecha string, sis SistemaLocal, cadena EstadoCadena, ahora time.Time) (*ResultadoSellar, error) {
+func SellarAnulacion(emisorNIF, emisorNombre string, series, fecha string, sis SistemaLocal, cadena EstadoCadena, ahora time.Time) (*ResultadoSellar, error) {
 	nif, err := domain.NewNIF(emisorNIF)
 	if err != nil {
 		return nil, fmt.Errorf("NIF del emisor: %v", err)
@@ -69,7 +69,9 @@ func SellarAnulacion(emisorNIF string, series, fecha string, sis SistemaLocal, c
 		return nil, fmt.Errorf("el chainRow de anulación no cumple el diseño AEAT: %v", err)
 	}
 
-	sub := xmlalta.NewSubmission(xmlalta.Issuer{Name: sis.NombreProductor, TaxID: nif.Value()}, reg)
+	// ObligadoEmision is the invoice ISSUER (the taxpayer), not the software
+	// producer: mixing them breaks the AEAT census match (audit finding).
+	sub := xmlalta.NewSubmission(xmlalta.Issuer{Name: emisorNombre, TaxID: nif.Value()}, reg)
 	xmlStr, err := sub.XML()
 	if err != nil {
 		return nil, fmt.Errorf("no se pudo generar el XML de anulación: %v", err)

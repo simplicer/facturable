@@ -8,3 +8,5 @@ web/build/
 *.sqlite
 *.p12
 dist/
+etc/*.ed25519*
+!etc/config.example.json

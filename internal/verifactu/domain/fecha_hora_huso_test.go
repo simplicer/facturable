@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -63,4 +64,15 @@ func parseTimeForTest(t *testing.T, raw string) time.Time {
 		t.Fatalf("time.Parse(%q) unexpected error: %v", raw, err)
 	}
 	return value
+}
+
+func TestFromTimeUTCProduceOffsetNumerico(t *testing.T) {
+	f := NewFechaHoraHusoFromTime(time.Date(2027, 1, 5, 10, 0, 0, 0, time.UTC))
+	raw := f.ISO8601()
+	if strings.HasSuffix(raw, "Z") {
+		t.Fatalf("la AEAT no acepta Z: %s", raw)
+	}
+	if !strings.HasSuffix(raw, "+01:00") {
+		t.Fatalf("invierno debe ser +01:00: %s", raw)
+	}
 }

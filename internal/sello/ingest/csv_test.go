@@ -65,3 +65,17 @@ func TestReadCSVVacio(t *testing.T) {
 		t.Fatalf("errores = %v", errores)
 	}
 }
+
+func TestReadCSVCabeceraInconsistente(t *testing.T) {
+	entrada := `numero_serie,fecha,tipo,descripcion,nif_cliente,nombre_cliente,tipo_impositivo,base,cuota
+F-2027-0001,05-01-2027,F1,Ok,B44531218,ACME,21,100.00,21.00
+F-2027-0001,06-01-2027,F1,Otra fecha igual serie,B44531218,ACME,21,100.00,21.00
+`
+	drafts, errores := ReadCSV(strings.NewReader(entrada))
+	if len(drafts) != 1 || len(errores) != 1 {
+		t.Fatalf("drafts=%d errores=%v", len(drafts), errores)
+	}
+	if drafts[0].Date != "05-01-2027" {
+		t.Fatalf("fecha alterada: %s", drafts[0].Date)
+	}
+}
