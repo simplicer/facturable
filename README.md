@@ -26,6 +26,9 @@ Local Veri*Factu stamp: turns any invoicing flow (Excel, templates, legacy softw
 
 OpenAPI contract: `docs/openapi.yaml`.
 
+## E2E (web)
+    cd web && npx playwright install chromium && npm run build && npx playwright test
+
 ## Quick start
     make up        # api + web via docker compose
     make test      # go test ./... + web checks
