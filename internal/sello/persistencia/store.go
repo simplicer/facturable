@@ -32,6 +32,13 @@ func Abrir(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+// Checkpoint vuelca el WAL al fichero principal (necesario antes de copiar
+// el fichero de la base de datos, p.ej. para un backup).
+func (s *Store) Checkpoint() error {
+	_, err := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
+	return err
+}
+
 func (s *Store) migrar() error {
 	_, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS empresas(
@@ -194,6 +201,36 @@ func (s *Store) PorID(id int64) (FilaListado, bool, error) {
 		}
 	}
 	return FilaListado{}, false, nil
+}
+
+// RegistroCadena es todo lo necesario para verificar la cadena completa.
+type RegistroCadena struct {
+	ID                                     int64
+	Serie, Fecha, Tipo, Generado           string
+	Cuota, Importe, Huella                 string
+	EnlaceSerie, EnlaceFecha, EnlaceHuella string
+}
+
+// CadenaCompleta devuelve los registros de un obligado en orden de sellado.
+func (s *Store) CadenaCompleta(nif string) ([]RegistroCadena, error) {
+	rows, err := s.db.Query(`
+SELECT id, serie, fecha, tipo, generado, cuota, importe, huella,
+       COALESCE(enlace_serie,''), COALESCE(enlace_fecha,''), COALESCE(enlace_huella,'')
+FROM registros WHERE nif=? ORDER BY id;`, nif)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo leer la cadena: %w", err)
+	}
+	defer rows.Close()
+	var out []RegistroCadena
+	for rows.Next() {
+		var r RegistroCadena
+		if err := rows.Scan(&r.ID, &r.Serie, &r.Fecha, &r.Tipo, &r.Generado,
+			&r.Cuota, &r.Importe, &r.Huella, &r.EnlaceSerie, &r.EnlaceFecha, &r.EnlaceHuella); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // FilaListado es la vista del libro para la UI y la exportación.
