@@ -1,6 +1,9 @@
 package plataforma
 
-import "net/http"
+import (
+	"encoding/json"
+	"net/http"
+)
 
 // Problem writes an application/problem+json response (RFC 9457 style).
 func Problem(w http.ResponseWriter, status int, title, detail, instance string) {
