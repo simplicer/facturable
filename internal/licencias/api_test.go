@@ -50,20 +50,20 @@ func TestLicenciasPUTIdempotente(t *testing.T) {
 	_, srv := nuevoAPIPrueba(t, time.Now)
 	cuerpo := `{"plan":"pro","nifs":["B72877814"],"dias_validez":31,"grace_days":7}`
 
-	r1 := put(t, srv, "lic-1", cuerpo)
+	r1 := put(t, srv, "11111111-1111-1111-1111-111111111111", cuerpo)
 	if r1.StatusCode != 201 {
 		t.Fatalf("primer PUT = %d", r1.StatusCode)
 	}
-	resp1 := put(t, srv, "lic-1b", cuerpo)
+	resp1 := put(t, srv, "22222222-2222-2222-2222-222222222222", cuerpo)
 	var env1 map[string]map[string]any
 	_ = json.NewDecoder(resp1.Body).Decode(&env1)
 	_ = env1["data"]["token"].(string)
 
-	r2 := put(t, srv, "lic-1", cuerpo)
+	r2 := put(t, srv, "11111111-1111-1111-1111-111111111111", cuerpo)
 	if r2.StatusCode != 200 {
 		t.Fatalf("replay PUT = %d, want 200", r2.StatusCode)
 	}
-	r3 := put(t, srv, "lic-1", `{"plan":"basico","nifs":[],"dias_validez":31,"grace_days":7}`)
+	r3 := put(t, srv, "11111111-1111-1111-1111-111111111111", `{"plan":"basico","nifs":[],"dias_validez":31,"grace_days":7}`)
 	if r3.StatusCode != 409 {
 		t.Fatalf("PUT conflictivo = %d, want 409", r3.StatusCode)
 	}
@@ -73,13 +73,13 @@ func TestLicenciasCheckReglaNuncaRehen(t *testing.T) {
 	ahora := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
 	api, srv := nuevoAPIPrueba(t, func() time.Time { return ahora })
 	_ = api
-	r := put(t, srv, "lic-x", `{"plan":"pro","nifs":[],"dias_validez":30,"grace_days":7}`)
+	r := put(t, srv, "33333333-3333-3333-3333-333333333333", `{"plan":"pro","nifs":[],"dias_validez":30,"grace_days":7}`)
 	if r.StatusCode != 201 {
 		t.Fatalf("PUT = %d", r.StatusCode)
 	}
 
 	get := func() map[string]any {
-		resp, err := srv.Client().Get(srv.URL + "/v1/licenses/lic-x/validity")
+		resp, err := srv.Client().Get(srv.URL + "/v1/licenses/33333333-3333-3333-3333-333333333333/validity")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -107,11 +107,14 @@ func TestLicenciasCheckReglaNuncaRehen(t *testing.T) {
 
 func TestLicencias404YValidacion(t *testing.T) {
 	_, srv := nuevoAPIPrueba(t, time.Now)
-	resp, _ := srv.Client().Get(srv.URL + "/v1/licenses/no-existe")
+	resp, _ := srv.Client().Get(srv.URL + "/v1/licenses/44444444-4444-4444-4444-444444444444")
 	if resp.StatusCode != 404 {
 		t.Fatalf("GET inexistente = %d", resp.StatusCode)
 	}
-	if r := put(t, srv, "mal", `{"plan":"pro","dias_validez":0}`); r.StatusCode != 422 {
+	if r := put(t, srv, "no-uuid", `{"plan":"pro","dias_validez":0}`); r.StatusCode != 400 {
+		t.Fatalf("id no UUID = %d, want 400", r.StatusCode)
+	}
+	if r := put(t, srv, "55555555-5555-5555-5555-555555555555", `{"plan":"pro","dias_validez":0}`); r.StatusCode != 422 {
 		t.Fatalf("dias_validez 0 = %d, want 422", r.StatusCode)
 	}
 }

@@ -72,12 +72,12 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("PUT /v1/certificado", guardarCertificado)
-	mux.HandleFunc("GET /v1/conexion-aeat", probarConexion)
+	mux.HandleFunc("PUT /v1/certificate", guardarCertificado)
+	mux.HandleFunc("GET /v1/connectivity", probarConexion)
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"status": "ok", "app": "facturable-sello", "modo": modo})
 	})
-	mux.HandleFunc("POST /v1/registros", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/records", func(w http.ResponseWriter, r *http.Request) {
 		res, err := srv.IngestaCSV(r.Body)
 		if err != nil {
 			writeErr(w, err)
@@ -85,7 +85,7 @@ func main() {
 		}
 		writeJSON(w, res)
 	})
-	mux.HandleFunc("POST /v1/remisiones", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST /v1/submissions", func(w http.ResponseWriter, _ *http.Request) {
 		n, err := srv.EnviarPendientes(context.Background())
 		if err != nil {
 			writeErr(w, err)
@@ -93,7 +93,7 @@ func main() {
 		}
 		writeJSON(w, map[string]int{"enviados": n})
 	})
-	mux.HandleFunc("GET /v1/registros/{id}/pdf", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /v1/records/{id}/pdf", func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
 			writeErr(w, fmt.Errorf("identificador de registro no válido"))
@@ -129,17 +129,17 @@ func main() {
 
 	// Colección de registros: representación por query (JSON por defecto,
 	// CSV para la gestoría con formato=csv + filtros por fecha).
-	mux.HandleFunc("GET /v1/registros", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /v1/records", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		if q.Get("formato") == "csv" {
-			desde, hasta := q.Get("desde"), q.Get("hasta")
-			if desde == "" {
-				desde = "01-01-2020"
+		if q.Get("format") == "csv" {
+			from, to := q.Get("from"), q.Get("to")
+			if from == "" {
+				from = "01-01-2020"
 			}
-			if hasta == "" {
-				hasta = time.Now().Format("02-01-2006")
+			if to == "" {
+				to = time.Now().Format("02-01-2006")
 			}
-			b, _, err := srv.ExportarPeriodo(desde, hasta)
+			b, _, err := srv.ExportarPeriodo(from, to)
 			if err != nil {
 				writeErr(w, err)
 				return

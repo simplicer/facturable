@@ -91,13 +91,13 @@ type peticionLicencia struct {
 
 func (a *API) put(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if id == "" || len(id) > 64 {
-		problem(w, 400, "identificador de licencia no válido", r)
+	if !esUUID(id) {
+		problem(w, 400, "invalid license id: a client-provided UUID is required", r)
 		return
 	}
 	var req peticionLicencia
 	if err := json.NewDecoder(io1MB(r)).Decode(&req); err != nil {
-		problem(w, 400, "cuerpo ilegible: "+err.Error(), r)
+		problem(w, 400, "unreadable body: "+err.Error(), r)
 		return
 	}
 	body := fmt.Sprintf("%v|%v|%d|%d", req.Plan, req.NIFs, req.DiasValidez, req.GraceDays)
@@ -108,7 +108,7 @@ func (a *API) put(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		if bodyExistente != body {
-			problem(w, 409, "la licencia ya existe con otros datos", r)
+			problem(w, 409, "license already exists with different data", r)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -121,7 +121,7 @@ func (a *API) put(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.DiasValidez <= 0 || req.DiasValidez > 400 {
-		problem(w, 422, "dias_validez debe estar entre 1 y 400", r)
+		problem(w, 422, "dias_validez must be between 1 and 400", r)
 		return
 	}
 	ahora := a.ahora().UTC()
@@ -184,7 +184,7 @@ func (a *API) porID(w http.ResponseWriter, r *http.Request) (License, string, bo
 	err := a.store.db.QueryRow(`SELECT plan, nifs, expires_at, grace_days, issued_at, token FROM licencias WHERE id=?;`, id).
 		Scan(&plan, &nifsJSON, &expires, &grace, &issued, &token)
 	if errors.Is(err, sql.ErrNoRows) {
-		problem(w, 404, "licencia no encontrada", r)
+		problem(w, 404, "license not found", r)
 		return License{}, "", false
 	}
 	if err != nil {
@@ -196,6 +196,26 @@ func (a *API) porID(w http.ResponseWriter, r *http.Request) (License, string, bo
 	ex, _ := time.Parse(time.RFC3339, expires)
 	is, _ := time.Parse(time.RFC3339, issued)
 	return NewLicense(id, Plan(plan), nifs, is, ex, grace), token, true
+}
+
+// esUUID accepts the canonical 8-4-4-4-12 hexadecimal form.
+func esUUID(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	for i, c := range id {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+		if !isHex {
+			return false
+		}
+	}
+	return true
 }
 
 func marshalNIFs(nifs []string) string {

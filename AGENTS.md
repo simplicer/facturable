@@ -14,6 +14,13 @@ Rules for all agents working this repo (protocol: ralph-loop-ddd; versioning: si
 - Use cases are named imperatively (SellInvoice, CancelInvoice, SubmitBatch). No `Service`/`Manager`/`Util` names.
 - Records (registro de facturación) are IMMUTABLE: append-only storage; corrections = new records (anulación / rectificativa R1 / sustitutivo).
 
+## Language & API naming (non-negotiable)
+- English ALWAYS for: endpoints, code identifiers, comments, git commits, technical docs, README, OpenAPI, changelogs.
+- Spanish ONLY for end-user facing runtime strings (UI copy, the AEAT error-dictionary actions shown to users, user manual).
+- API: plural noun collections (`/v1/records`, `/v1/licenses`), kebab-case only when unavoidable; prefer ONE word per segment (`/v1/connectivity`, not `/v1/aeat-connection`). HTTP verbs are the actions: no verbs in paths.
+- IDs in public APIs are client-provided UUIDs (idempotent PUT per Zalando). Internal integer ids never cross the API boundary.
+- Resource-oriented per restful-api-guidelines (Zalando): problem+json errors, query params for filtering/format.
+
 ## Conventions
 - Go standard project layout (cmd/, internal/). Tests colocated `_test.go`. Table-driven tests.
 - Conventional Commits (English) — one commit per task. Version derived per simplicer-semver; `VERSION` is source of truth, keep in sync.
