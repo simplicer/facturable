@@ -3,6 +3,9 @@ services:
     build:
       context: ..
       dockerfile: infra/docker/Dockerfile.api
+    environment:
+      - FACTURABLE_CONFIG=/app/etc/config.example.json
+      - FACTURABLE_VERSION=${FACTURABLE_VERSION:-0.1.0-unstable}
     ports: ["8080:8080"]
     volumes: ["api-data:/app/var"]
     healthcheck:

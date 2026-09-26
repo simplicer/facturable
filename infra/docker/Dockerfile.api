@@ -1,13 +1,15 @@
 FROM golang:1.26-alpine AS build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY cmd ./cmd
 COPY internal ./internal
-RUN CGO_ENABLED=0 go build -o /out/api ./cmd/api && printf '#!/bin/sh\nwget -qO- http://127.0.0.1:8080/status || exit 1\n' > /out/api-healthcheck && chmod +x /out/api-healthcheck
+RUN CGO_ENABLED=0 go build -o /out/api ./cmd/api && \
+    printf '#!/bin/sh\nwget -qO- http://127.0.0.1:8080/status || exit 1\n' > /out/api-healthcheck && chmod +x /out/api-healthcheck
 FROM alpine:3.20
 RUN apk add --no-cache wget ca-certificates
 WORKDIR /app
 COPY --from=build /out/api /app/bin/api
+COPY --from=build /out/api-healthcheck /app/bin/api-healthcheck
 COPY etc /app/etc
 EXPOSE 8080
 ENTRYPOINT ["/app/bin/api"]
