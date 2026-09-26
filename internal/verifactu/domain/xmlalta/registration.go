@@ -23,7 +23,7 @@ type BreakdownLine struct {
 	Tax                    string `xml:"sum1:Impuesto,omitempty"`            // optional, e.g. "01" IVA
 	RegimeKey              string `xml:"sum1:ClaveRegimen"`                  // e.g. "01"
 	OperationQualification string `xml:"sum1:CalificacionOperacion"`         // e.g. "S1"
-	TaxRate                string `xml:"sum1:TipoImpositivo,omitempty"`             // optional decimal
+	TaxRate                string `xml:"sum1:TipoImpositivo,omitempty"`      // optional decimal
 	TaxBase                string `xml:"sum1:BaseImponibleOimporteNoSujeto"` // decimal
 	TaxFee                 string `xml:"sum1:CuotaRepercutida"`              // decimal
 }

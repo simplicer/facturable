@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"facturable/internal/licenses"
 	"facturable/internal/plataforma"
+	"facturable/internal/relay"
 
 	_ "modernc.org/sqlite"
 )
@@ -47,6 +49,17 @@ func main() {
 	if secret := os.Getenv("STRIPE_WEBHOOK_SECRET"); secret != "" {
 		apiLic.MountStripe(mux, secret)
 	}
+	relaySrv, err := relay.NewServer(db)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "relay:", err)
+		os.Exit(1)
+	}
+	relaySrv.Mount(mux)
+	go func() {
+		for range time.Tick(time.Hour) {
+			relaySrv.Purge()
+		}
+	}()
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

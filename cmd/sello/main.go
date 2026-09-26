@@ -58,6 +58,24 @@ func main() {
 		},
 	}
 
+	// Relay E2E opcional: con RELAY_API_URL el agente publica su clave
+	// X25519 y pulla sobres cifrados cada minuto (el servidor no puede
+	// leerlos: PRODUCTO-MVP §10.4).
+	var relayCli *sello.RelayClient
+	if apiURL := os.Getenv("RELAY_API_URL"); apiURL != "" {
+		priv, err := sello.LoadOrCreateRelayKey(filepath.Dir(db))
+		if err != nil {
+			log.Fatalf("relay key: %v", err)
+		}
+		relayCli = sello.NewRelayClient(apiURL, nif, priv)
+		relayCli.Service = srv
+		if err := relayCli.Register(context.Background()); err != nil {
+			log.Printf("relay register: %v", err)
+		} else {
+			log.Printf("relay activo contra %s", apiURL)
+		}
+	}
+
 	// Planificador de remisión: la AEAT exige esperar entre envíos; un ciclo
 	// por minuto encaja con el control de flujo (spec AEAT §6.4.4.1).
 	go func() {
