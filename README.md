@@ -15,14 +15,16 @@ Local Veri*Factu stamp: turns any invoicing flow (Excel, templates, legacy softw
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/v1/records` | create stamped records from a CSV body |
+| PUT | `/v1/records/{uuid}` | create stamped records from a CSV body (idempotent, client UUID) |
 | GET | `/v1/records` | ledger (JSON; `?format=csv&from=&to=` for the accountant) |
-| GET | `/v1/records/{id}/pdf` | stamped invoice PDF with QR |
+| GET | `/v1/records/{uuid}/pdf` | stamped invoice PDF with QR |
 | POST | `/v1/submissions` | submit pending records (one per AEAT flow-control window) |
 | PUT | `/v1/certificate` | install P12 certificate (idempotent singleton) |
 | GET | `/v1/connectivity` | certificate + AEAT preprod connectivity state |
 | PUT | `/v1/licenses/{uuid}` | idempotent license issue (client UUID) |
 | GET | `/v1/licenses/{uuid}/validity` | never-hostage validity check |
+
+OpenAPI contract: `docs/openapi.yaml`.
 
 ## Quick start
     make up        # api + web via docker compose

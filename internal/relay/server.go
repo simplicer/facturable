@@ -55,8 +55,9 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	// Zalando exception 1: client-provided UUID, idempotent PUT.
 	mux.HandleFunc("PUT /v1/envelopes/{uuid}", s.putEnvelope)
 	mux.HandleFunc("GET /v1/envelopes", s.listEnvelopes)
-	// ACK is a domain command (mark delivered), justified :action exception.
-	mux.HandleFunc("POST /v1/envelopes/{uuid}:acknowledge", s.ackEnvelope)
+	// Acknowledgement as a nested collection (Go mux cannot carry a suffix
+	// after a wildcard; Zalando :action suffix is unavailable here).
+	mux.HandleFunc("POST /v1/envelopes/{uuid}/acknowledgements", s.ackEnvelope)
 }
 
 func (s *Server) putKey(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,231 @@
+openapi: 3.0.3
+info:
+  title: Facturable API
+  version: 0.1.0-unstable
+  description: >
+    Local agent API (sello, 127.0.0.1) and public API (licenses, relay,
+    payments). Resource-oriented per Zalando guidelines; idempotent creation
+    with client-supplied UUIDs; errors follow RFC 9457 problem+json.
+servers:
+  - url: http://127.0.0.1:8787
+    description: Local agent
+  - url: https://api.facturable.es
+    description: Public API
+paths:
+  /v1/records/{uuid}:
+    put:
+      summary: Create stamped records from a CSV batch (idempotent)
+      description: |
+        Same uuid + same body replays the stored result (200 OK).
+        Same uuid + different body returns 409 Conflict.
+        Requires license when LICENSE_TOKEN is configured (402 otherwise).
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema: { type: string }
+            example: "numero_serie,fecha,tipo,descripcion,nif_cliente,nombre_cliente,tipo_impositivo,base,cuota\nF-2027-0001,05-01-2027,F1,Services,B44531218,ACME SL,21,1000.00,210.00"
+      responses:
+        '201': { description: Batch stamped }
+        '200': { description: Idempotent replay }
+        '402': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /v1/records:
+    get:
+      summary: Ledger rows (JSON or CSV)
+      parameters:
+        - name: format
+          in: query
+          schema: { type: string, enum: [json, csv], default: json }
+        - name: from
+          in: query
+          schema: { type: string, pattern: 'DD-MM-AAAA' }
+        - name: to
+          in: query
+          schema: { type: string, pattern: 'DD-MM-AAAA' }
+      responses:
+        '200':
+          description: Ledger
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/LedgerRow' }
+            text/csv: { schema: { type: string } }
+  /v1/records/{uuid}/pdf:
+    get:
+      summary: Stamped invoice PDF with QR and VERI*FACTU legend
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: PDF document
+          content: { application/pdf: { schema: { type: string, format: binary } } }
+  /v1/submissions:
+    post:
+      summary: Submit one batch of pending records to AEAT
+      description: Honors the 60s/1000 flow control; one envelope per call window.
+      responses:
+        '200':
+          description: Submitted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enviados: { type: integer }
+  /v1/certificates:
+    put:
+      summary: Install the P12 certificate (idempotent singleton)
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                certificate: { type: string, format: binary }
+                password: { type: string }
+      responses:
+        '200': { description: Stored (restart to activate) }
+  /v1/connectivity:
+    get:
+      summary: Certificate load state and AEAT test-environment handshake
+      responses:
+        '200': { description: Connectivity report }
+  /v1/declaration:
+    get:
+      summary: Producer responsible declaration (RRSIF art. 13-15), plain text
+      responses:
+        '200': { description: Declaration text }
+  /v1/version:
+    get:
+      summary: Build version
+      responses:
+        '200':
+          description: Version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties: { version: { type: string } }
+  /v1/licenses/{uuid}:
+    put:
+      summary: Issue a license (idempotent, client UUID)
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan, dias_validez]
+              properties:
+                plan: { type: string, enum: [basico, pro, gestoria] }
+                nifs: { type: array, items: { type: string } }
+                dias_validez: { type: integer, minimum: 1, maximum: 400 }
+                grace_days: { type: integer, default: 7 }
+      responses:
+        '201': { description: Issued (signed token in response) }
+        '200': { description: Idempotent replay }
+        '409': { $ref: '#/components/responses/Problem' }
+  /v1/licenses/{uuid}/validity:
+    get:
+      summary: Never-hostage validity (stamp_new gated; open_data/export always true)
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Validity flags }
+  /v1/stripe:webhook:
+    post:
+      summary: Stripe webhook (signature verified, idempotent issuance)
+      security: []
+      responses:
+        '200': { description: Ignored or replayed }
+        '201': { description: License issued }
+        '401': { $ref: '#/components/responses/Problem' }
+  /v1/keys/{nif}:
+    put:
+      summary: Register the agent X25519 public key for a taxpayer
+      parameters:
+        - name: nif
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Registered }
+    get:
+      summary: Fetch the registered public key
+      responses:
+        '200': { description: Public key (base64) }
+  /v1/envelopes/{uuid}:
+    put:
+      summary: Drop an encrypted ingestion envelope (idempotent, client UUID)
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: nif
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '201': { description: Stored (opaque ciphertext, TTL 7 days) }
+        '200': { description: Idempotent replay }
+  /v1/envelopes/{uuid}:acknowledge:
+    post:
+      summary: Mark an envelope as delivered after local ingestion
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Acknowledged }
+components:
+  responses:
+    Problem:
+      description: Error (RFC 9457 problem+json)
+      content:
+        application/problem+json:
+          schema:
+            type: object
+            properties:
+              title: { type: string }
+              status: { type: integer }
+              detail: { type: string }
+              instance: { type: string }
+  schemas:
+    LedgerRow:
+      type: object
+      properties:
+        UUID: { type: string, format: uuid }
+        Serie: { type: string }
+        Date: { type: string }
+        Tipo: { type: string }
+        Cuota: { type: string }
+        Importe: { type: string }
+        Estado: { type: string }
+        CSV: { type: string }
+        Huella: { type: string }
+        Remitido: { type: string }

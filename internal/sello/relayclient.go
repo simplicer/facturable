@@ -127,7 +127,7 @@ func (c *RelayClient) Pull(ctx context.Context) (int, error) {
 }
 
 func (c *RelayClient) ack(ctx context.Context, id string) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.APIBase+"/v1/envelopes/"+id+":acknowledge", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.APIBase+"/v1/envelopes/"+id+"/acknowledgements", nil)
 	if err != nil {
 		return
 	}
