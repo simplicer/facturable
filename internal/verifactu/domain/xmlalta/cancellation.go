@@ -45,7 +45,7 @@ func (r CancellationRecord) Validate() error {
 		errs = append(errs, errors.New("el identificador del emisor de la factura anulada (IDEmisorFacturaAnulada) es obligatorio"))
 	}
 	if r.InvoiceID.Number == "" {
-		errs = append(errs, errors.New("el número de serie de la factura anulada (NumSerieFacturaAnulada) es obligatorio"))
+		errs = append(errs, errors.New("el número de series de la factura anulada (NumSerieFacturaAnulada) es obligatorio"))
 	}
 	if !validDate(r.InvoiceID.ExpeditionDate) {
 		errs = append(errs, fmt.Errorf("la fecha de expedición de la factura anulada debe tener formato DD-MM-AAAA: %q", r.InvoiceID.ExpeditionDate))

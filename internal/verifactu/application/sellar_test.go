@@ -12,13 +12,13 @@ var sisPrueba = SistemaLocal{
 	Version: "0.1.0", NumeroInstalacion: "00001",
 }
 
-func testDraft() BorradorAlta {
-	return BorradorAlta{
-		NumeroSerie: "F-2027-0001", Fecha: "05-01-2027", Tipo: "F1",
-		Descripcion: "Servicios de enero", NIFCliente: "B44531218", NombreCliente: "ACME SL",
-		Desgloses: []DesgloseAlta{
-			{TipoImpositivo: "21", Base: "1000.00", Cuota: "210.00"},
-			{TipoImpositivo: "10", Base: "500.00", Cuota: "50.00"},
+func testDraft() InvoiceDraft {
+	return InvoiceDraft{
+		Series: "F-2027-0001", Date: "05-01-2027", Tipo: "F1",
+		Description: "Servicios de enero", ClientNIF: "B44531218", ClientName: "ACME SL",
+		Desgloses: []BreakdownDraft{
+			{TaxRate: "21", Base: "1000.00", Cuota: "210.00"},
+			{TaxRate: "10", Base: "500.00", Cuota: "50.00"},
 		},
 	}
 }
@@ -51,9 +51,9 @@ func TestSellarAltaEncadenaConAnterior(t *testing.T) {
 		t.Fatal(err)
 	}
 	segundaB := testDraft()
-	segundaB.NumeroSerie = "F-2027-0002"
+	segundaB.Series = "F-2027-0002"
 
-	cadena := EstadoCadena{Last: &EnlaceTriple{Serie: primera.Serie, Fecha: primera.Fecha, Huella: primera.Huella}}
+	cadena := EstadoCadena{Last: &EnlaceTriple{Serie: primera.Serie, Date: primera.Date, Huella: primera.Huella}}
 	res, err := SellarAlta("B72877814", "Facturable Test SL", segundaB, sisPrueba, cadena, time.Now())
 	if err != nil {
 		t.Fatalf("SellarAlta() = %v", err)
@@ -72,10 +72,10 @@ func TestSellarAltaRechazaCadenaRota(t *testing.T) {
 		t.Fatal(err)
 	}
 	// n-1 declara un n-2 distinto del n-2 real almacenado.
-	declarado := &EnlaceTriple{Serie: "F-2026-9999", Fecha: "31-12-2026", Huella: strings.Repeat("E", 64)}
-	real := &EnlaceTriple{Serie: "F-2026-9998", Fecha: "30-12-2026", Huella: strings.Repeat("D", 64)}
+	declarado := &EnlaceTriple{Serie: "F-2026-9999", Date: "31-12-2026", Huella: strings.Repeat("E", 64)}
+	real := &EnlaceTriple{Serie: "F-2026-9998", Date: "30-12-2026", Huella: strings.Repeat("D", 64)}
 	cadena := EstadoCadena{
-		Last:               &EnlaceTriple{Serie: primera.Serie, Fecha: primera.Fecha, Huella: primera.Huella},
+		Last:               &EnlaceTriple{Serie: primera.Serie, Date: primera.Date, Huella: primera.Huella},
 		DeclaradoPorUltimo: declarado,
 		Previous:           real,
 	}
@@ -85,7 +85,7 @@ func TestSellarAltaRechazaCadenaRota(t *testing.T) {
 
 	// Caso válido: lo declarado coincide con el real.
 	cadenaOK := EstadoCadena{
-		Last:               &EnlaceTriple{Serie: primera.Serie, Fecha: primera.Fecha, Huella: primera.Huella},
+		Last:               &EnlaceTriple{Serie: primera.Serie, Date: primera.Date, Huella: primera.Huella},
 		DeclaradoPorUltimo: real,
 		Previous:           real,
 	}
@@ -98,13 +98,13 @@ func TestSellarAltaErroresDato(t *testing.T) {
 	base := testDraft()
 
 	b := base
-	b.NumeroSerie = ""
+	b.Series = ""
 	if _, err := SellarAlta("B72877814", "X", b, sisPrueba, EstadoCadena{}, time.Now()); err == nil {
-		t.Fatal("serie vacía aceptada")
+		t.Fatal("series vacía aceptada")
 	}
 
 	b = base
-	b.NIFCliente = "1234"
+	b.ClientNIF = "1234"
 	if _, err := SellarAlta("B72877814", "X", b, sisPrueba, EstadoCadena{}, time.Now()); err == nil {
 		t.Fatal("NIF cliente inválido aceptado")
 	}
@@ -116,7 +116,7 @@ func TestSellarAltaErroresDato(t *testing.T) {
 	}
 
 	b = base
-	b.Desgloses = []DesgloseAlta{{TipoImpositivo: "21", Base: "1.00", Cuota: "0,21"}}
+	b.Desgloses = []BreakdownDraft{{TaxRate: "21", Base: "1.00", Cuota: "0,21"}}
 	res, err := SellarAlta("B72877814", "X", b, sisPrueba, EstadoCadena{}, time.Now())
 	if err != nil || res.Cuota != "0.21" || res.Importe != "1.21" {
 		t.Fatalf("coma decimal: res=%+v err=%v", res, err)

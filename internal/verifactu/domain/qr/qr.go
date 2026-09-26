@@ -101,7 +101,7 @@ func (q Query) Validate() error {
 		return errors.New("el NIF del emisor es obligatorio en la URL de cotejo")
 	}
 	if q.InvoiceNumber == "" {
-		return errors.New("el número de serie de la factura es obligatorio en la URL de cotejo")
+		return errors.New("el número de series de la factura es obligatorio en la URL de cotejo")
 	}
 	if !validDate(q.ExpeditionDate) {
 		return fmt.Errorf("la fecha de expedición debe tener formato DD-MM-AAAA: %q", q.ExpeditionDate)

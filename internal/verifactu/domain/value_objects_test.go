@@ -9,7 +9,7 @@ func TestValueObjectStringMethods(t *testing.T) {
 		want string
 	}{
 		{name: "nif", got: mustNIF(t, "12345678Z").String(), want: "12345678Z"},
-		{name: "serie", got: mustSerie(t, "A-001").String(), want: "A-001"},
+		{name: "series", got: mustSerie(t, "A-001").String(), want: "A-001"},
 		{name: "fecha", got: mustFecha(t, "04-11-2024").String(), want: "04-11-2024"},
 		{name: "importe", got: mustImporte(t, "21.4").String(), want: "21.40"},
 		{name: "huso", got: mustHuso(t, "2024-11-04T12:36:39+01:00").String(), want: "2024-11-04T12:36:39+01:00"},
@@ -52,7 +52,7 @@ func TestHuellaRegistroAnulacionRejectsIncompleteRecords(t *testing.T) {
 	base := RegistroAnulacionHuella{
 		Emisor:   mustNIF(t, "89890001K"),
 		Serie:    mustSerie(t, "12345679/G34"),
-		Fecha:    mustFecha(t, "01-01-2024"),
+		Date:     mustFecha(t, "01-01-2024"),
 		Generado: mustHuso(t, "2024-01-01T19:20:40+01:00"),
 	}
 	tests := []struct {
@@ -60,8 +60,8 @@ func TestHuellaRegistroAnulacionRejectsIncompleteRecords(t *testing.T) {
 		mutate func(*RegistroAnulacionHuella)
 	}{
 		{name: "missing emisor", mutate: func(r *RegistroAnulacionHuella) { r.Emisor = NIF{} }},
-		{name: "missing serie", mutate: func(r *RegistroAnulacionHuella) { r.Serie = SerieNumero{} }},
-		{name: "missing fecha", mutate: func(r *RegistroAnulacionHuella) { r.Fecha = FechaExpedicion{} }},
+		{name: "missing series", mutate: func(r *RegistroAnulacionHuella) { r.Serie = SerieNumero{} }},
+		{name: "missing fecha", mutate: func(r *RegistroAnulacionHuella) { r.Date = FechaExpedicion{} }},
 		{name: "missing generation instant", mutate: func(r *RegistroAnulacionHuella) { r.Generado = FechaHoraHuso{} }},
 	}
 	for _, tt := range tests {

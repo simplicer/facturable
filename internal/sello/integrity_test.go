@@ -70,7 +70,7 @@ func TestAnularYEnviar(t *testing.T) {
 		t.Fatal(err)
 	}
 	if f.Tipo != "ANULACION" || f.Estado != "correcto" {
-		t.Fatalf("fila anulación = %+v", f)
+		t.Fatalf("row anulación = %+v", f)
 	}
 }
 

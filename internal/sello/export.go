@@ -15,14 +15,14 @@ import (
 func ExportLedger(filas []persistence.LedgerRow) ([]byte, error) {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
-	cabecera := []string{"Serie", "Fecha", "Tipo", "Base+Cuota", "CuotaTotal",
+	header := []string{"Serie", "Date", "Tipo", "Base+Cuota", "CuotaTotal",
 		"ImporteTotal", "EstadoAEAT", "CSV", "Huella", "Remitido"}
-	if err := w.Write(cabecera); err != nil {
+	if err := w.Write(header); err != nil {
 		return nil, err
 	}
 	for _, f := range filas {
 		if err := w.Write([]string{
-			f.Serie, f.Fecha, f.Tipo, fmt.Sprintf("%s|%s", f.Cuota, f.Importe),
+			f.Serie, f.Date, f.Tipo, fmt.Sprintf("%s|%s", f.Cuota, f.Importe),
 			f.Cuota, f.Importe, f.Estado, f.CSV, f.Huella, f.Remitido,
 		}); err != nil {
 			return nil, err
@@ -57,7 +57,7 @@ func (s *Service) ExportPeriod(desde, hasta string) ([]byte, int, error) {
 func filtrarPeriodo(filas []persistence.LedgerRow, desde, hasta time.Time) []persistence.LedgerRow {
 	var out []persistence.LedgerRow
 	for _, f := range filas {
-		fecha, err := time.Parse("02-01-2006", f.Fecha)
+		fecha, err := time.Parse("02-01-2006", f.Date)
 		if err != nil {
 			continue
 		}

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// firmar construye una cabecera Stripe-Signature válida.
+// firmar construye una header Stripe-Signature válida.
 func firmar(secret, payload string, t time.Time) string {
 	ts := fmt.Sprintf("%d", t.Unix())
 	mac := hmac.New(sha256.New, []byte(secret))

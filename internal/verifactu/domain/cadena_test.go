@@ -11,9 +11,9 @@ func mustChainPieces(t *testing.T) (Enlace, Enlace, Enlace) {
 	fecha := mustFecha(t, "05-01-2027")
 	huella1 := mustHuella(t, "1111111111111111111111111111111111111111111111111111111111111111")
 	huella2 := mustHuella(t, "2222222222222222222222222222222222222222222222222222222222222222")
-	n2 := Enlace{Serie: serie1, Fecha: fecha, Huella: huella1}          // chainRow real n-2
-	n1 := Enlace{Serie: serie2, Fecha: fecha, Huella: huella2}          // identidad de n-1
-	return n1, n2, Enlace{Serie: serie1, Fecha: fecha, Huella: huella1} // n2Referenciado
+	n2 := Enlace{Serie: serie1, Date: fecha, Huella: huella1}          // chainRow real n-2
+	n1 := Enlace{Serie: serie2, Date: fecha, Huella: huella2}          // identidad de n-1
+	return n1, n2, Enlace{Serie: serie1, Date: fecha, Huella: huella1} // n2Referenciado
 }
 
 func TestVerificarSalto(t *testing.T) {

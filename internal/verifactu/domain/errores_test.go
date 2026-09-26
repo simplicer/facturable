@@ -34,7 +34,7 @@ func TestClasificarError(t *testing.T) {
 				t.Fatalf("ClasificarError(%q) = %+v, want categoria=%s reintentable=%v aceptado=%v",
 					tt.codigo, info, tt.categoria, tt.reintentable, tt.aceptado)
 			}
-			if info.Accion == "" || info.Descripcion == "" {
+			if info.Accion == "" || info.Description == "" {
 				t.Fatalf("ClasificarError(%q) sin descripción o acción: %+v", tt.codigo, info)
 			}
 		})

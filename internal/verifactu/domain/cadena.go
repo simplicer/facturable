@@ -7,13 +7,13 @@ import "fmt"
 // date and fingerprint of the predecessor.
 type Enlace struct {
 	Serie  SerieNumero
-	Fecha  FechaExpedicion
+	Date   FechaExpedicion
 	Huella Huella
 }
 
 // IsZero reports whether the enlace points to nothing.
 func (e Enlace) IsZero() bool {
-	return e.Serie.IsZero() && e.Fecha.IsZero() && e.Huella.IsZero()
+	return e.Serie.IsZero() && e.Date.IsZero() && e.Huella.IsZero()
 }
 
 // RegistroVigente is the store view of the LAST record (n-1) needed to chain

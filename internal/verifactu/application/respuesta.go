@@ -29,7 +29,7 @@ type RespuestaLote struct {
 type RespuestaLinea struct {
 	NIFEmisor     string
 	NumSerie      string
-	Fecha         string
+	Date          string
 	TipoOperacion string // Alta | Anulacion
 	// Estado: Correcto | AceptadoConErrores | Incorrecto.
 	Estado         string
@@ -61,12 +61,12 @@ type respuestaEnvelope struct {
 				IDFactura struct {
 					NIF   string `xml:"IDEmisorFactura"`
 					Serie string `xml:"NumSerieFactura"`
-					Fecha string `xml:"FechaExpedicionFactura"`
+					Date  string `xml:"FechaExpedicionFactura"`
 				} `xml:"IDFactura"`
 				Tipo        string `xml:"TipoOperacion"`
 				Estado      string `xml:"EstadoRegistro"`
 				CodigoRaw   string `xml:"CodigoEstadoRegistro"`
-				Descripcion string `xml:"DescripcionCodigoRegistro"`
+				Description string `xml:"DescripcionCodigoRegistro"`
 			} `xml:"RespuestaLinea"`
 		} `xml:"RespuestaRegFactuSistemaFacturacion"`
 	} `xml:"Body"`
@@ -97,11 +97,11 @@ func ParseRespuesta(soapXML string) (RespuestaLote, error) {
 		out.Lineas = append(out.Lineas, RespuestaLinea{
 			NIFEmisor:      strings.TrimSpace(l.IDFactura.NIF),
 			NumSerie:       strings.TrimSpace(l.IDFactura.Serie),
-			Fecha:          strings.TrimSpace(l.IDFactura.Fecha),
+			Date:           strings.TrimSpace(l.IDFactura.Date),
 			TipoOperacion:  strings.TrimSpace(l.Tipo),
 			Estado:         strings.TrimSpace(l.Estado),
 			CodigoError:    strings.TrimSpace(l.CodigoRaw),
-			DescripcionRaw: strings.TrimSpace(l.Descripcion),
+			DescripcionRaw: strings.TrimSpace(l.Description),
 		})
 	}
 	return out, nil

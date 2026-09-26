@@ -26,13 +26,13 @@ type Service struct {
 
 // IngestResult resume una ingesta de CSV.
 type IngestResult struct {
-	Sellados int                `json:"sellados"`
-	Errores  []ingest.ErrorFila `json:"errores,omitempty"`
+	Sellados int               `json:"sellados"`
+	Errores  []ingest.RowError `json:"errores,omitempty"`
 }
 
 // IngestCSV valida, sella y guarda un CSV de facturas.
 func (s *Service) IngestCSV(r io.Reader) (*IngestResult, error) {
-	borradores, errores := ingest.LeerCSV(r)
+	borradores, errores := ingest.ReadCSV(r)
 	res := &IngestResult{Errores: errores}
 
 	for _, b := range borradores {
@@ -41,19 +41,19 @@ func (s *Service) IngestCSV(r io.Reader) (*IngestResult, error) {
 			return res, err
 		}
 		sellado, err := application.SellarAlta(s.EmisorNIF, s.EmisorNombre,
-			application.BorradorAlta{
-				NumeroSerie: b.NumeroSerie, Fecha: b.Fecha, Tipo: b.Tipo,
-				Descripcion: b.Descripcion, NIFCliente: b.NIFCliente,
-				NombreCliente: b.NombreCliente,
-				Desgloses:     toBreakdowns(b.Desgloses),
+			application.InvoiceDraft{
+				Series: b.Series, Date: b.Date, Tipo: b.Tipo,
+				Description: b.Description, ClientNIF: b.ClientNIF,
+				ClientName: b.ClientName,
+				Desgloses:  toBreakdowns(b.Breakdowns),
 			}, s.Sistema, estado, time.Now())
 		if err != nil {
-			res.Errores = append(res.Errores, ingest.ErrorFila{
+			res.Errores = append(res.Errores, ingest.RowError{
 				Fila: b.Fila, Campo: "factura", Detalle: err.Error()})
 			continue
 		}
 		if _, err := s.Store.Append(persistence.StoredRecord{
-			NIF: sellado.NIF, Serie: sellado.Serie, Fecha: sellado.Fecha,
+			NIF: sellado.NIF, Serie: sellado.Serie, Date: sellado.Date,
 			Tipo: sellado.Tipo, Generado: sellado.Generado,
 			Cuota: sellado.Cuota, Importe: sellado.Importe,
 			Huella: sellado.Huella, XML: sellado.XML,
@@ -67,18 +67,56 @@ func (s *Service) IngestCSV(r io.Reader) (*IngestResult, error) {
 	return res, nil
 }
 
+// IngestDrafts stamps and stores validated JSON drafts (relay/API path).
+func (s *Service) IngestDrafts(drafts []ingest.Draft) (*IngestResult, error) {
+	res := &IngestResult{}
+	for i, d := range drafts {
+		estado, err := s.chainState()
+		if err != nil {
+			return res, err
+		}
+		desgloses := make([]application.BreakdownDraft, 0, len(d.Breakdowns))
+		for _, bd := range d.Breakdowns {
+			desgloses = append(desgloses, application.BreakdownDraft{
+				TaxRate: bd.TaxRate, Base: bd.Base, Cuota: bd.Fee})
+		}
+		sellado, err := application.SellarAlta(s.EmisorNIF, s.EmisorNombre,
+			application.InvoiceDraft{
+				Series: d.Series, Date: d.Date, Tipo: d.Tipo,
+				Description: d.Description, ClientNIF: d.ClientNIF,
+				ClientName: d.ClientName, Desgloses: desgloses,
+			}, s.Sistema, estado, time.Now())
+		if err != nil {
+			res.Errores = append(res.Errores, ingest.RowError{
+				Fila: i + 1, Campo: "factura", Detalle: err.Error()})
+			continue
+		}
+		if _, err := s.Store.Append(persistence.StoredRecord{
+			NIF: sellado.NIF, Serie: sellado.Serie, Date: sellado.Date, Tipo: sellado.Tipo,
+			Generado: sellado.Generado, Cuota: sellado.Cuota, Importe: sellado.Importe,
+			Huella: sellado.Huella, XML: sellado.XML,
+			EnlaceSerie: sellado.EnlaceSerie, EnlaceFecha: sellado.EnlaceFecha,
+			EnlaceHuella: sellado.EnlaceHuella,
+		}); err != nil {
+			return res, fmt.Errorf("could not store %s: %w", sellado.Serie, err)
+		}
+		res.Sellados++
+	}
+	return res, nil
+}
+
 // Cancel genera y guarda el chainRow de anulación de una factura.
-func (s *Service) Cancel(serie, fecha string) (int64, error) {
+func (s *Service) Cancel(series, fecha string) (int64, error) {
 	estado, err := s.chainState()
 	if err != nil {
 		return 0, err
 	}
-	res, err := application.SellarAnulacion(s.EmisorNIF, serie, fecha, s.Sistema, estado, time.Now())
+	res, err := application.SellarAnulacion(s.EmisorNIF, series, fecha, s.Sistema, estado, time.Now())
 	if err != nil {
 		return 0, err
 	}
 	id, err := s.Store.Append(persistence.StoredRecord{
-		NIF: res.NIF, Serie: res.Serie, Fecha: res.Fecha, Tipo: res.Tipo,
+		NIF: res.NIF, Serie: res.Serie, Date: res.Date, Tipo: res.Tipo,
 		Generado: res.Generado, Cuota: "0.00", Importe: "0.00",
 		Huella: res.Huella, XML: res.XML,
 		EnlaceSerie: res.EnlaceSerie, EnlaceFecha: res.EnlaceFecha, EnlaceHuella: res.EnlaceHuella,
@@ -131,7 +169,7 @@ func (s *Service) recordResponse(p persistence.PendingRecord, lote application.R
 	detalle := linea.DescripcionRaw
 	if linea.CodigoError != "" && linea.Estado != "Correcto" {
 		info := domain.ClasificarError(linea.CodigoError)
-		detalle = fmt.Sprintf("%s — %s", info.Descripcion, info.Accion)
+		detalle = fmt.Sprintf("%s — %s", info.Description, info.Accion)
 	}
 	return s.Store.RecordSubmission(persistence.StoredSubmission{
 		RegistroID: p.ID, Estado: estado, CSV: lote.CSV,
@@ -141,7 +179,7 @@ func (s *Service) recordResponse(p persistence.PendingRecord, lote application.R
 func lineFor(p persistence.PendingRecord, lote application.RespuestaLote) *application.RespuestaLinea {
 	for i := range lote.Lineas {
 		l := &lote.Lineas[i]
-		if l.NumSerie == p.Serie && l.Fecha == p.Fecha {
+		if l.NumSerie == p.Serie && l.Date == p.Date {
 			return l
 		}
 	}
@@ -149,7 +187,7 @@ func lineFor(p persistence.PendingRecord, lote application.RespuestaLote) *appli
 }
 
 func (s *Service) chainState() (application.EstadoCadena, error) {
-	serie, fecha, huella, enlS, enlF, enlH, ok, err := s.Store.Last(s.EmisorNIF)
+	series, fecha, huella, enlS, enlF, enlH, ok, err := s.Store.Last(s.EmisorNIF)
 	if err != nil {
 		return application.EstadoCadena{}, err
 	}
@@ -157,26 +195,26 @@ func (s *Service) chainState() (application.EstadoCadena, error) {
 		return application.EstadoCadena{}, nil
 	}
 	estado := application.EstadoCadena{
-		Last: &application.EnlaceTriple{Serie: serie, Fecha: fecha, Huella: huella},
+		Last: &application.EnlaceTriple{Serie: series, Date: fecha, Huella: huella},
 	}
 	if enlS != "" {
-		estado.DeclaradoPorUltimo = &application.EnlaceTriple{Serie: enlS, Fecha: enlF, Huella: enlH}
+		estado.DeclaradoPorUltimo = &application.EnlaceTriple{Serie: enlS, Date: enlF, Huella: enlH}
 	}
 	aS, aF, aH, aOk, err := s.Store.Previous(s.EmisorNIF)
 	if err != nil {
 		return estado, err
 	}
 	if aOk {
-		estado.Previous = &application.EnlaceTriple{Serie: aS, Fecha: aF, Huella: aH}
+		estado.Previous = &application.EnlaceTriple{Serie: aS, Date: aF, Huella: aH}
 	}
 	return estado, nil
 }
 
-func toBreakdowns(ds []ingest.DesgloseBorrador) []application.DesgloseAlta {
-	out := make([]application.DesgloseAlta, 0, len(ds))
+func toBreakdowns(ds []ingest.BreakdownDraft) []application.BreakdownDraft {
+	out := make([]application.BreakdownDraft, 0, len(ds))
 	for _, d := range ds {
-		out = append(out, application.DesgloseAlta{
-			TipoImpositivo: d.TipoImpositivo, Base: d.Base, Cuota: d.Cuota})
+		out = append(out, application.BreakdownDraft{
+			TaxRate: d.TaxRate, Base: d.Base, Cuota: d.Fee})
 	}
 	return out
 }

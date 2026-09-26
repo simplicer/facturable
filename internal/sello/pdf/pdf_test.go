@@ -9,9 +9,9 @@ import (
 func ejemplo() DatosFactura {
 	return DatosFactura{
 		EmpresaNombre: "Facturable Test SL", EmpresaNIF: "B72877814",
-		Serie: "F-2027-0001", Fecha: "05-01-2027", Tipo: "F1",
+		Serie: "F-2027-0001", Date: "05-01-2027", Tipo: "F1",
 		ClienteNombre: "ACME SL (ñ á é)", ClienteNIF: "B44531218",
-		Descripcion: "Servicios de enero",
+		Description: "Servicios de enero",
 		Desgloses:   []DesgloseFactura{{Tipo: "21", Base: "1000.00", Cuota: "210.00"}},
 		CuotaTotal:  "210.00", ImporteTotal: "1210.00",
 		EstadoAEAT: "correcto", CSV: "ABC123DEF456GH78",
@@ -25,7 +25,7 @@ func TestFacturaPDFEstructura(t *testing.T) {
 		t.Fatalf("Factura(): %v", err)
 	}
 	if !bytes.HasPrefix(b, []byte("%PDF-1.4")) {
-		t.Fatal("sin cabecera PDF")
+		t.Fatal("sin header PDF")
 	}
 	if !bytes.Contains(b, []byte("%%EOF")) || !bytes.Contains(b, []byte("/Type /Page")) ||
 		!bytes.Contains(b, []byte("/BaseFont /Helvetica")) {

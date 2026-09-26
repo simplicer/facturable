@@ -18,7 +18,7 @@ func newTestStore(t *testing.T) *Store {
 func chainRow(n int, huella, enlaceHuella string) StoredRecord {
 	return StoredRecord{
 		NIF: "B72877814", Serie: "F-2027-000" + string(rune('0'+n)),
-		Fecha: "05-01-2027", Tipo: "F1", Generado: "2027-01-05T10:00:00+01:00",
+		Date: "05-01-2027", Tipo: "F1", Generado: "2027-01-05T10:00:00+01:00",
 		Cuota: "21.00", Importe: "121.00", Huella: huella, XML: "<xml/>",
 		EnlaceSerie: "F-2027-000" + string(rune('0'+n-1)), EnlaceFecha: "05-01-2027", EnlaceHuella: enlaceHuella,
 	}
@@ -42,12 +42,12 @@ func TestCadenaYAnterior(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	serie, fecha, huella, es, ef, eh, ok, err := s.Last("B72877814")
+	series, fecha, huella, es, ef, eh, ok, err := s.Last("B72877814")
 	if err != nil || !ok {
 		t.Fatalf("Last: ok=%v err=%v", ok, err)
 	}
-	if serie != "F-2027-0002" || huella != h2 || es != "F-2027-0001" || eh != h1 || ef != "05-01-2027" {
-		t.Fatalf("Last = %s %s %s / %s %s %s", serie, fecha, huella, es, ef, eh)
+	if series != "F-2027-0002" || huella != h2 || es != "F-2027-0001" || eh != h1 || ef != "05-01-2027" {
+		t.Fatalf("Last = %s %s %s / %s %s %s", series, fecha, huella, es, ef, eh)
 	}
 	aSerie, _, aHuella, aOk, err := s.Previous("B72877814")
 	if err != nil || !aOk || aSerie != "F-2027-0001" || aHuella != h1 {

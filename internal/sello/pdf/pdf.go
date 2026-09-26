@@ -14,9 +14,9 @@ import (
 // DatosFactura es todo lo que se imprime en el PDF sellado.
 type DatosFactura struct {
 	EmpresaNombre, EmpresaNIF string
-	Serie, Fecha, Tipo        string
+	Serie, Date, Tipo         string
 	ClienteNombre, ClienteNIF string
-	Descripcion               string
+	Description               string
 	Desgloses                 []DesgloseFactura
 	CuotaTotal, ImporteTotal  string
 	EstadoAEAT, CSV           string
@@ -32,11 +32,11 @@ type DesgloseFactura struct {
 func Factura(d DatosFactura) ([]byte, error) {
 	c := &contenido{b: &bytes.Buffer{}}
 
-	// cabecera
+	// header
 	c.texto(40, 800, 16, d.EmpresaNombre)
 	c.texto(40, 784, 10, "NIF: "+d.EmpresaNIF)
 	c.texto(400, 800, 16, "FACTURA "+d.Serie)
-	c.texto(400, 784, 10, "Fecha: "+d.Fecha+"   Tipo: "+d.Tipo)
+	c.texto(400, 784, 10, "Date: "+d.Date+"   Tipo: "+d.Tipo)
 
 	// cliente y descripción
 	c.texto(40, 740, 11, "CLIENTO")

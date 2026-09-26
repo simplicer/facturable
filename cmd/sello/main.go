@@ -105,7 +105,7 @@ func main() {
 			return
 		}
 		urlQR, err := qr.VerificationURL(qr.Production, qr.Query{
-			NIF: f.NIF, InvoiceNumber: f.Serie, ExpeditionDate: f.Fecha, TotalAmount: f.Importe,
+			NIF: f.NIF, InvoiceNumber: f.Serie, ExpeditionDate: f.Date, TotalAmount: f.Importe,
 		})
 		if err != nil {
 			writeErr(w, err)
@@ -113,8 +113,8 @@ func main() {
 		}
 		b, err := pdf.Factura(pdf.DatosFactura{
 			EmpresaNombre: nombre, EmpresaNIF: nif,
-			Serie: f.Serie, Fecha: f.Fecha, Tipo: f.Tipo,
-			ClienteNIF: "", Descripcion: "Registro de facturación Veri*Factu",
+			Serie: f.Serie, Date: f.Date, Tipo: f.Tipo,
+			ClienteNIF: "",
 			Desgloses:  []pdf.DesgloseFactura{{Tipo: "", Base: importeMenosCuota(f.Importe, f.Cuota), Cuota: f.Cuota}},
 			CuotaTotal: f.Cuota, ImporteTotal: f.Importe,
 			EstadoAEAT: f.Estado, CSV: f.CSV, URLCotejo: urlQR,
@@ -189,7 +189,7 @@ func (fakeSubmitter) Remitir(_ context.Context, soapXML string) (application.Res
 	return application.RespuestaLote{
 		EstadoGlobal: "Correcto", CSV: "SIMULADO0000000A",
 		Lineas: []application.RespuestaLinea{{
-			NIFEmisor: os.Getenv("SELLO_NIF"), NumSerie: serie, Fecha: fecha,
+			NIFEmisor: os.Getenv("SELLO_NIF"), NumSerie: serie, Date: fecha,
 			TipoOperacion: "Alta", Estado: "Correcto"}},
 	}, nil
 }

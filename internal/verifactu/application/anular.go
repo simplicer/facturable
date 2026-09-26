@@ -10,13 +10,13 @@ import (
 
 // SellarAnulacion genera el chainRow de anulación de una factura emitida y
 // lo encadena como cualquier otro chainRow (FAQ AEAT: altas y anulaciones
-// comparten la MISMA cadena, en orden de generación).
-func SellarAnulacion(emisorNIF string, serie, fecha string, sis SistemaLocal, cadena EstadoCadena, ahora time.Time) (*ResultadoSellar, error) {
+// comparten la MISMA cadena, en orderSeen de generación).
+func SellarAnulacion(emisorNIF string, series, fecha string, sis SistemaLocal, cadena EstadoCadena, ahora time.Time) (*ResultadoSellar, error) {
 	nif, err := domain.NewNIF(emisorNIF)
 	if err != nil {
 		return nil, fmt.Errorf("NIF del emisor: %v", err)
 	}
-	serieVO, err := domain.NewSerieNumero(serie)
+	serieVO, err := domain.NewSerieNumero(series)
 	if err != nil {
 		return nil, fmt.Errorf("número de la factura a anular: %v", err)
 	}
@@ -25,7 +25,7 @@ func SellarAnulacion(emisorNIF string, serie, fecha string, sis SistemaLocal, ca
 		return nil, fmt.Errorf("fecha de la factura a anular: %v", err)
 	}
 	if cadena.Last == nil {
-		return nil, fmt.Errorf("no se puede anular %s: el libro no tiene registros de esa empresa", serie)
+		return nil, fmt.Errorf("no se puede anular %s: el libro no tiene registros de esa empresa", series)
 	}
 
 	// verificación del salto n-1/n-2 (idéntica a SellarAlta)
@@ -43,7 +43,7 @@ func SellarAnulacion(emisorNIF string, serie, fecha string, sis SistemaLocal, ca
 
 	generado := domain.NewFechaHoraHusoFromTime(ahora)
 	huella, err := domain.HuellaRegistroAnulacion(domain.RegistroAnulacionHuella{
-		Emisor: nif, Serie: serieVO, Fecha: fechaVO, Generado: generado, Previous: ult.Huella,
+		Emisor: nif, Serie: serieVO, Date: fechaVO, Generado: generado, Previous: ult.Huella,
 	})
 	if err != nil {
 		return nil, err
@@ -51,11 +51,11 @@ func SellarAnulacion(emisorNIF string, serie, fecha string, sis SistemaLocal, ca
 
 	reg := xmlalta.NewCancellationRecord()
 	reg.InvoiceID = xmlalta.CancelledInvoiceID{
-		IssuerID: nif.Value(), Number: serieVO.Value(), ExpeditionDate: fechaVO.Fecha(),
+		IssuerID: nif.Value(), Number: serieVO.Value(), ExpeditionDate: fechaVO.Date(),
 	}
 	reg.Chaining = &xmlalta.Chaining{PreviousRecord: &xmlalta.PreviousRecord{
 		IssuerID: nif.Value(), Number: ult.Serie.Value(),
-		ExpeditionDate: ult.Fecha.Fecha(), Fingerprint: ult.Huella.Value(),
+		ExpeditionDate: ult.Date.Date(), Fingerprint: ult.Huella.Value(),
 	}}
 	reg.System = xmlalta.SoftwareSystem{
 		Name: sis.NombreProductor, TaxID: sis.NIFProductor,
@@ -77,9 +77,9 @@ func SellarAnulacion(emisorNIF string, serie, fecha string, sis SistemaLocal, ca
 
 	return &ResultadoSellar{
 		XML: xmlStr, NIF: nif.Value(), Serie: serieVO.Value(),
-		Fecha: fechaVO.Fecha(), Tipo: "ANULACION",
+		Date: fechaVO.Date(), Tipo: "ANULACION",
 		Generado: generado.ISO8601(), Huella: huella.Value(),
-		EnlaceSerie: cadena.Last.Serie, EnlaceFecha: cadena.Last.Fecha,
+		EnlaceSerie: cadena.Last.Serie, EnlaceFecha: cadena.Last.Date,
 		EnlaceHuella: cadena.Last.Huella,
 	}, nil
 }

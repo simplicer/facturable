@@ -16,12 +16,12 @@ func TestExportarPeriodoFiltraYFormatea(t *testing.T) {
 	}
 	defer store.Close()
 
-	storeRow := func(serie, fecha string) {
+	storeRow := func(series, fecha string) {
 		t.Helper()
 		if _, err := store.Append(persistence.StoredRecord{
-			NIF: "B72877814", Serie: serie, Fecha: fecha, Tipo: "F1",
+			NIF: "B72877814", Serie: series, Date: fecha, Tipo: "F1",
 			Generado: "2027-01-05T10:00:00+01:00", Cuota: "21.00", Importe: "121.00",
-			Huella: strings.Repeat(serie[len(serie)-1:], 1) + strings.Repeat("0", 63-len(serie)+1),
+			Huella: strings.Repeat(series[len(series)-1:], 1) + strings.Repeat("0", 63-len(series)+1),
 			XML:    "<x/>",
 		}); err != nil {
 			t.Fatal(err)

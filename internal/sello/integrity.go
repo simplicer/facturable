@@ -30,7 +30,7 @@ func (s *Service) VerifyChain() (*IntegrityReport, error) {
 		anterior := ""
 		if idx > 0 {
 			prev := registros[idx-1]
-			if r.EnlaceSerie != prev.Serie || r.EnlaceFecha != prev.Fecha || r.EnlaceHuella != prev.Huella {
+			if r.EnlaceSerie != prev.Serie || r.EnlaceFecha != prev.Date || r.EnlaceHuella != prev.Huella {
 				info.Rupturas = append(info.Rupturas, fmt.Sprintf(
 					"chainRow %d (%s): su enlace no apunta al chainRow anterior (%s)",
 					r.ID, r.Serie, prev.Serie))
@@ -66,11 +66,11 @@ func recomputeRegistration(emisor string, r persistence.ChainRecord, anterior st
 	if err != nil {
 		return domain.Huella{}, err
 	}
-	serie, err := domain.NewSerieNumero(r.Serie)
+	series, err := domain.NewSerieNumero(r.Serie)
 	if err != nil {
 		return domain.Huella{}, err
 	}
-	fecha, err := domain.NewFechaExpedicion(r.Fecha)
+	fecha, err := domain.NewFechaExpedicion(r.Date)
 	if err != nil {
 		return domain.Huella{}, err
 	}
@@ -95,7 +95,7 @@ func recomputeRegistration(emisor string, r persistence.ChainRecord, anterior st
 		return domain.Huella{}, err
 	}
 	return domain.HuellaRegistroAlta(domain.RegistroAltaHuella{
-		Emisor: nif, Serie: serie, Fecha: fecha, Tipo: tipo,
+		Emisor: nif, Serie: series, Date: fecha, Tipo: tipo,
 		Cuota: cuota, Importe: importe, Generado: generado, Previous: ant,
 	})
 }
@@ -113,11 +113,11 @@ func recomputeCancellation(emisor string, r persistence.ChainRecord, anterior st
 	if err != nil {
 		return domain.Huella{}, err
 	}
-	serie, err := domain.NewSerieNumero(r.Serie)
+	series, err := domain.NewSerieNumero(r.Serie)
 	if err != nil {
 		return domain.Huella{}, err
 	}
-	fecha, err := domain.NewFechaExpedicion(r.Fecha)
+	fecha, err := domain.NewFechaExpedicion(r.Date)
 	if err != nil {
 		return domain.Huella{}, err
 	}
@@ -130,6 +130,6 @@ func recomputeCancellation(emisor string, r persistence.ChainRecord, anterior st
 		return domain.Huella{}, err
 	}
 	return domain.HuellaRegistroAnulacion(domain.RegistroAnulacionHuella{
-		Emisor: nif, Serie: serie, Fecha: fecha, Generado: generado, Previous: ant,
+		Emisor: nif, Serie: series, Date: fecha, Generado: generado, Previous: ant,
 	})
 }

@@ -16,9 +16,9 @@ type fakeSubmitter struct{ recibidos []string }
 func (r *fakeSubmitter) Remitir(_ context.Context, soapXML string) (application.RespuestaLote, error) {
 	r.recibidos = append(r.recibidos, soapXML)
 	lote := application.RespuestaLote{EstadoGlobal: "Correcto", CSV: "CSVSIMULADO00001", TiempoEsperaSeg: 0}
-	for _, serie := range extractSeries(soapXML) {
+	for _, series := range extractSeries(soapXML) {
 		lote.Lineas = append(lote.Lineas, application.RespuestaLinea{
-			NIFEmisor: "B72877814", NumSerie: serie, Fecha: "05-01-2027",
+			NIFEmisor: "B72877814", NumSerie: series, Date: "05-01-2027",
 			TipoOperacion: "Alta", Estado: "Correcto"})
 	}
 	return lote, nil
@@ -113,7 +113,7 @@ func TestCircuitoCompleto(t *testing.T) {
 	}
 	for _, f := range filas {
 		if f.Estado != "correcto" || f.CSV != "CSVSIMULADO00001" {
-			t.Fatalf("fila %+v", f)
+			t.Fatalf("row %+v", f)
 		}
 	}
 

@@ -88,10 +88,10 @@ func TestEstructuraBasica(t *testing.T) {
 		}
 	}
 
-	// temporización fila 6
+	// temporización row 6
 	for i := 8; i < size-8; i++ {
 		if m.M[6][i] != (i%2 == 0) {
-			t.Fatalf("temporización fila 6 col %d", i)
+			t.Fatalf("temporización row 6 col %d", i)
 		}
 	}
 

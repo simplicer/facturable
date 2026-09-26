@@ -18,8 +18,8 @@ func TestNewFechaExpedicionValid(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewFechaExpedicion(%q) unexpected error: %v", tt.raw, err)
 			}
-			if got.Fecha() != tt.want {
-				t.Fatalf("NewFechaExpedicion(%q).Fecha() = %q, want %q", tt.raw, got.Fecha(), tt.want)
+			if got.Date() != tt.want {
+				t.Fatalf("NewFechaExpedicion(%q).Date() = %q, want %q", tt.raw, got.Date(), tt.want)
 			}
 		})
 	}
@@ -50,7 +50,7 @@ func TestNewFechaExpedicionFromTimeKeepsDatePart(t *testing.T) {
 	// Seeded time, never the wall clock: the domain stays pure.
 	stamp := parseTimeForTest(t, "2024-11-04T23:59:59+01:00")
 	got := NewFechaExpedicionFromTime(stamp)
-	if got.Fecha() != "04-11-2024" {
-		t.Fatalf("Fecha() = %q, want 04-11-2024 (date part in the record timezone)", got.Fecha())
+	if got.Date() != "04-11-2024" {
+		t.Fatalf("Date() = %q, want 04-11-2024 (date part in the record timezone)", got.Date())
 	}
 }

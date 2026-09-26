@@ -50,7 +50,7 @@ func (h Huella) String() string {
 type RegistroAltaHuella struct {
 	Emisor   NIF             // IDEmisorFactura
 	Serie    SerieNumero     // NumSerieFactura
-	Fecha    FechaExpedicion // FechaExpedicionFactura
+	Date     FechaExpedicion // FechaExpedicionFactura
 	Tipo     TipoFactura     // TipoFactura
 	Cuota    CuotaTotal      // CuotaTotal
 	Importe  ImporteTotal    // ImporteTotal
@@ -68,7 +68,7 @@ func HuellaRegistroAlta(record RegistroAltaHuella) (Huella, error) {
 	if record.Serie.IsZero() {
 		return Huella{}, fmt.Errorf("no se puede calcular la huella: falta el número de factura")
 	}
-	if record.Fecha.IsZero() {
+	if record.Date.IsZero() {
 		return Huella{}, fmt.Errorf("no se puede calcular la huella: falta la fecha de expedición")
 	}
 	if record.Tipo == "" {
@@ -92,7 +92,7 @@ func HuellaRegistroAlta(record RegistroAltaHuella) (Huella, error) {
 type RegistroAnulacionHuella struct {
 	Emisor   NIF             // IDEmisorFacturaAnulada
 	Serie    SerieNumero     // NumSerieFacturaAnulada
-	Fecha    FechaExpedicion // FechaExpedicionFacturaAnulada
+	Date     FechaExpedicion // FechaExpedicionFacturaAnulada
 	Generado FechaHoraHuso   // FechaHoraHusoGenRegistro
 	Previous Huella          // Encadenamiento/RegistroAnterior/Huella (zero for the first record)
 }
@@ -105,7 +105,7 @@ func HuellaRegistroAnulacion(record RegistroAnulacionHuella) (Huella, error) {
 	if record.Serie.IsZero() {
 		return Huella{}, fmt.Errorf("no se puede calcular la huella de anulación: falta el número de factura")
 	}
-	if record.Fecha.IsZero() {
+	if record.Date.IsZero() {
 		return Huella{}, fmt.Errorf("no se puede calcular la huella de anulación: falta la fecha de expedición")
 	}
 	if record.Generado.IsZero() {
@@ -121,7 +121,7 @@ func altaHuellaInput(record RegistroAltaHuella) string {
 	return strings.Join([]string{
 		"IDEmisorFactura=" + record.Emisor.Value(),
 		"NumSerieFactura=" + record.Serie.Value(),
-		"FechaExpedicionFactura=" + record.Fecha.Fecha(),
+		"FechaExpedicionFactura=" + record.Date.Date(),
 		"TipoFactura=" + record.Tipo.String(),
 		"CuotaTotal=" + record.Cuota.WithoutTrailingZeros(),
 		"ImporteTotal=" + record.Importe.WithoutTrailingZeros(),
@@ -136,7 +136,7 @@ func anulacionHuellaInput(record RegistroAnulacionHuella) string {
 	return strings.Join([]string{
 		"IDEmisorFacturaAnulada=" + record.Emisor.Value(),
 		"NumSerieFacturaAnulada=" + record.Serie.Value(),
-		"FechaExpedicionFacturaAnulada=" + record.Fecha.Fecha(),
+		"FechaExpedicionFacturaAnulada=" + record.Date.Date(),
 		"Huella=" + record.Previous.Value(),
 		"FechaHoraHusoGenRegistro=" + record.Generado.ISO8601(),
 	}, "&")

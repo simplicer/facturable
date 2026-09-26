@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS empresas(
 CREATE TABLE IF NOT EXISTS registros(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   nif TEXT NOT NULL,
-  serie TEXT NOT NULL,
+  series TEXT NOT NULL,
   fecha TEXT NOT NULL,
   tipo TEXT NOT NULL,
   generado TEXT NOT NULL,
@@ -86,7 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_registros_orden ON registros(nif, id);
 
 // StoredRecord es un chainRow listo para sellar en el libro.
 type StoredRecord struct {
-	NIF, Serie, Fecha, Tipo, Generado      string
+	NIF, Serie, Date, Tipo, Generado       string
 	Cuota, Importe, Huella, XML            string
 	EnlaceSerie, EnlaceFecha, EnlaceHuella string // vacíos si es el primero
 }
@@ -94,9 +94,9 @@ type StoredRecord struct {
 // Append añade un chainRow al libro (append-only).
 func (s *Store) Append(r StoredRecord) (int64, error) {
 	res, err := s.db.Exec(`INSERT INTO registros
-(nif, serie, fecha, tipo, generado, cuota, importe, huella, enlace_serie, enlace_fecha, enlace_huella, xml, creado_en)
+(nif, series, fecha, tipo, generado, cuota, importe, huella, enlace_serie, enlace_fecha, enlace_huella, xml, creado_en)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-		r.NIF, r.Serie, r.Fecha, r.Tipo, r.Generado, r.Cuota, r.Importe, r.Huella,
+		r.NIF, r.Serie, r.Date, r.Tipo, r.Generado, r.Cuota, r.Importe, r.Huella,
 		nullIfEmpty(r.EnlaceSerie), nullIfEmpty(r.EnlaceFecha), nullIfEmpty(r.EnlaceHuella),
 		r.XML, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
@@ -107,32 +107,32 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);`,
 
 // Last devuelve identidad y enlace del último chainRow de un obligado.
 // ok=false cuando la cadena aún no tiene registros.
-func (s *Store) Last(nif string) (serie, fecha, huella, enlSerie, enlFecha, enlHuella string, ok bool, err error) {
-	row := s.db.QueryRow(`SELECT serie, fecha, huella, enlace_serie, enlace_fecha, enlace_huella
+func (s *Store) Last(nif string) (series, fecha, huella, enlSerie, enlFecha, enlHuella string, ok bool, err error) {
+	row := s.db.QueryRow(`SELECT series, fecha, huella, enlace_serie, enlace_fecha, enlace_huella
 FROM registros WHERE nif=? ORDER BY id DESC LIMIT 1;`, nif)
 	var es, ef, eh sql.NullString
-	if err := row.Scan(&serie, &fecha, &huella, &es, &ef, &eh); err != nil {
+	if err := row.Scan(&series, &fecha, &huella, &es, &ef, &eh); err != nil {
 		if err == sql.ErrNoRows {
 			return "", "", "", "", "", "", false, nil
 		}
 		return "", "", "", "", "", "", false, fmt.Errorf("no se pudo leer el último chainRow: %w", err)
 	}
-	return serie, fecha, huella, es.String, ef.String, eh.String, true, nil
+	return series, fecha, huella, es.String, ef.String, eh.String, true, nil
 }
 
-// Previous devuelve serie/fecha/huella del penúltimo chainRow (n-2) de un
+// Previous devuelve series/fecha/huella del penúltimo chainRow (n-2) de un
 // obligado; ok=false cuando la cadena tiene un solo chainRow o ninguno.
 // Es la pieza que alimenta domain.VerificarSalto antes de sellar.
-func (s *Store) Previous(nif string) (serie, fecha, huella string, ok bool, err error) {
-	row := s.db.QueryRow(`SELECT serie, fecha, huella
+func (s *Store) Previous(nif string) (series, fecha, huella string, ok bool, err error) {
+	row := s.db.QueryRow(`SELECT series, fecha, huella
 FROM registros WHERE nif=? ORDER BY id DESC LIMIT 1 OFFSET 1;`, nif)
-	if err := row.Scan(&serie, &fecha, &huella); err != nil {
+	if err := row.Scan(&series, &fecha, &huella); err != nil {
 		if err == sql.ErrNoRows {
 			return "", "", "", false, nil
 		}
 		return "", "", "", false, fmt.Errorf("no se pudo leer el chainRow anterior: %w", err)
 	}
-	return serie, fecha, huella, true, nil
+	return series, fecha, huella, true, nil
 }
 
 // Submission
@@ -158,7 +158,7 @@ func (s *Store) RecordSubmission(r StoredSubmission) error {
 type PendingRecord struct {
 	ID    int64
 	Serie string
-	Fecha string
+	Date  string
 	XML   string
 }
 
@@ -167,7 +167,7 @@ type PendingRecord struct {
 // reenvían solos.
 func (s *Store) Pending(nif string, limite int) ([]PendingRecord, error) {
 	rows, err := s.db.Query(`
-SELECT r.id, r.serie, r.fecha, r.xml
+SELECT r.id, r.series, r.fecha, r.xml
 FROM registros r
 WHERE r.nif = ?
   AND NOT EXISTS (
@@ -181,7 +181,7 @@ ORDER BY r.id LIMIT ?;`, nif, limite)
 	var out []PendingRecord
 	for rows.Next() {
 		var p PendingRecord
-		if err := rows.Scan(&p.ID, &p.Serie, &p.Fecha, &p.XML); err != nil {
+		if err := rows.Scan(&p.ID, &p.Serie, &p.Date, &p.XML); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -189,7 +189,7 @@ ORDER BY r.id LIMIT ?;`, nif, limite)
 	return out, rows.Err()
 }
 
-// ByID devuelve la fila del libro de un chainRow concreto.
+// ByID devuelve la row del libro de un chainRow concreto.
 func (s *Store) ByID(id int64) (LedgerRow, bool, error) {
 	filas, err := s.Ledger("", 0, 1_000_000_000, 1_000_000)
 	if err != nil {
@@ -206,15 +206,15 @@ func (s *Store) ByID(id int64) (LedgerRow, bool, error) {
 // ChainRecord es todo lo necesario para verificar la cadena completa.
 type ChainRecord struct {
 	ID                                     int64
-	Serie, Fecha, Tipo, Generado           string
+	Serie, Date, Tipo, Generado            string
 	Cuota, Importe, Huella                 string
 	EnlaceSerie, EnlaceFecha, EnlaceHuella string
 }
 
-// FullChain devuelve los registros de un obligado en orden de sellado.
+// FullChain devuelve los registros de un obligado en orderSeen de sellado.
 func (s *Store) FullChain(nif string) ([]ChainRecord, error) {
 	rows, err := s.db.Query(`
-SELECT id, serie, fecha, tipo, generado, cuota, importe, huella,
+SELECT id, series, fecha, tipo, generado, cuota, importe, huella,
        COALESCE(enlace_serie,''), COALESCE(enlace_fecha,''), COALESCE(enlace_huella,'')
 FROM registros WHERE nif=? ORDER BY id;`, nif)
 	if err != nil {
@@ -224,7 +224,7 @@ FROM registros WHERE nif=? ORDER BY id;`, nif)
 	var out []ChainRecord
 	for rows.Next() {
 		var r ChainRecord
-		if err := rows.Scan(&r.ID, &r.Serie, &r.Fecha, &r.Tipo, &r.Generado,
+		if err := rows.Scan(&r.ID, &r.Serie, &r.Date, &r.Tipo, &r.Generado,
 			&r.Cuota, &r.Importe, &r.Huella, &r.EnlaceSerie, &r.EnlaceFecha, &r.EnlaceHuella); err != nil {
 			return nil, err
 		}
@@ -235,18 +235,18 @@ FROM registros WHERE nif=? ORDER BY id;`, nif)
 
 // LedgerRow es la vista del libro para la UI y la exportación.
 type LedgerRow struct {
-	ID                      int64
-	NIF, Serie, Fecha, Tipo string
-	Cuota, Importe, Huella  string
-	Estado                  string
-	CSV                     string
-	Remitido                string
+	ID                     int64
+	NIF, Serie, Date, Tipo string
+	Cuota, Importe, Huella string
+	Estado                 string
+	CSV                    string
+	Remitido               string
 }
 
 // Ledger devuelve el libro ordenado por inserción con el último estado.
 func (s *Store) Ledger(nif string, desde, hasta int64, limite int) ([]LedgerRow, error) {
 	rows, err := s.db.Query(`
-SELECT r.id, r.nif, r.serie, r.fecha, r.tipo, r.cuota, r.importe, r.huella,
+SELECT r.id, r.nif, r.series, r.fecha, r.tipo, r.cuota, r.importe, r.huella,
        COALESCE(e.estado,'pendiente'),
        COALESCE(e.csv, (SELECT csv FROM remisiones
                          WHERE registro_id = r.id AND csv IS NOT NULL
@@ -264,7 +264,7 @@ ORDER BY r.id LIMIT ?;`, nif, nif, desde, hasta, limite)
 	var out []LedgerRow
 	for rows.Next() {
 		var f LedgerRow
-		if err := rows.Scan(&f.ID, &f.NIF, &f.Serie, &f.Fecha, &f.Tipo, &f.Cuota, &f.Importe, &f.Huella, &f.Estado, &f.CSV, &f.Remitido); err != nil {
+		if err := rows.Scan(&f.ID, &f.NIF, &f.Serie, &f.Date, &f.Tipo, &f.Cuota, &f.Importe, &f.Huella, &f.Estado, &f.CSV, &f.Remitido); err != nil {
 			return nil, err
 		}
 		out = append(out, f)

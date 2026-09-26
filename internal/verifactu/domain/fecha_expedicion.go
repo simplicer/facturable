@@ -40,8 +40,8 @@ func NewFechaExpedicionFromTime(stamp time.Time) FechaExpedicion {
 	return FechaExpedicion{value: time.Date(year, month, day, 0, 0, 0, 0, stamp.Location())}
 }
 
-// Fecha returns the date formatted as DD-MM-AAAA for AEAT fields.
-func (f FechaExpedicion) Fecha() string {
+// Date returns the date formatted as DD-MM-AAAA for AEAT fields.
+func (f FechaExpedicion) Date() string {
 	return f.value.Format(aeatDateLayout)
 }
 
@@ -51,5 +51,5 @@ func (f FechaExpedicion) IsZero() bool {
 }
 
 func (f FechaExpedicion) String() string {
-	return f.Fecha()
+	return f.Date()
 }

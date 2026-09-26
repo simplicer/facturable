@@ -11,9 +11,9 @@ func TestSellarAnulacionEncadenaYValida(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cadena := EstadoCadena{Last: &EnlaceTriple{Serie: alta.Serie, Fecha: alta.Fecha, Huella: alta.Huella}}
+	cadena := EstadoCadena{Last: &EnlaceTriple{Serie: alta.Serie, Date: alta.Date, Huella: alta.Huella}}
 
-	res, err := SellarAnulacion("B72877814", testDraft().NumeroSerie, "05-01-2027", sisPrueba, cadena, time.Now())
+	res, err := SellarAnulacion("B72877814", testDraft().Series, "05-01-2027", sisPrueba, cadena, time.Now())
 	if err != nil {
 		t.Fatalf("SellarAnulacion(): %v", err)
 	}

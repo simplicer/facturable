@@ -54,10 +54,10 @@ func newMatrix(size int) [][]bool {
 // temporización, módulo oscuro y zonas reservadas de format/version info.
 func placeFunctions(m, reservado [][]bool, version, size int) {
 	// patrones de posición + separadores
-	ponerFinder := func(fila, col int) {
+	ponerFinder := func(row, col int) {
 		for dr := -1; dr <= 7; dr++ {
 			for dc := -1; dc <= 7; dc++ {
-				r, c := fila+dr, col+dc
+				r, c := row+dr, col+dc
 				if r < 0 || r >= size || c < 0 || c >= size {
 					continue
 				}
@@ -73,7 +73,7 @@ func placeFunctions(m, reservado [][]bool, version, size int) {
 	ponerFinder(0, size-7)
 	ponerFinder(size-7, 0)
 
-	// temporización (fila 6 y columna 6)
+	// temporización (row 6 y columna 6)
 	for i := 8; i < size-8; i++ {
 		oscuro := i%2 == 0
 		m[6][i] = oscuro
@@ -104,7 +104,7 @@ func placeFunctions(m, reservado [][]bool, version, size int) {
 	// reserva EXACTA de format info (15 bits en dos copias + módulo oscuro):
 	// columna 8: filas 0..8 (bits 0..7 y timing) y filas size-7..size-1
 	// (bits 8..14); el módulo oscuro ocupa (size-8, 8).
-	// fila 8: columnas 0..8 y columnas size-8..size-1.
+	// row 8: templateColumns 0..8 y templateColumns size-8..size-1.
 	for i := 0; i <= 8; i++ {
 		reservado[8][i] = true
 		reservado[i][8] = true
@@ -116,7 +116,7 @@ func placeFunctions(m, reservado [][]bool, version, size int) {
 	m[size-8][8] = true
 	reservado[size-8][8] = true
 
-	// reserva version info (v>=7): bloques de 3 columnas x 6 filas junto a
+	// reserva version info (v>=7): bloques de 3 templateColumns x 6 filas junto a
 	// los finders superior-derecho e inferior-izquierdo
 	if version >= 7 {
 		for i := 0; i < 6; i++ {
@@ -139,18 +139,18 @@ func placeData(m, reservado [][]bool, cw []byte, size int) {
 			col = 5 // salta la columna de temporización
 		}
 		for i := 0; i < size; i++ {
-			var fila int
+			var row int
 			if down {
-				fila = size - 1 - i
+				row = size - 1 - i
 			} else {
-				fila = i
+				row = i
 			}
 			for _, c := range []int{col, col - 1} {
-				if reservado[fila][c] {
+				if reservado[row][c] {
 					continue
 				}
 				if bit < totalBits {
-					m[fila][c] = cw[bit/8]&(1<<uint(7-bit%8)) != 0
+					m[row][c] = cw[bit/8]&(1<<uint(7-bit%8)) != 0
 				}
 				bit++
 			}
@@ -198,8 +198,8 @@ func maskBit(mask, r, c int) bool {
 //
 //	vertical (columna 8): bits 0..5 en filas 0..5, bits 6..7 en filas 7..8,
 //	  bits 8..14 en filas size-7..size-1 (LSB arriba).
-//	horizontal (fila 8): bits 0..7 en columnas size-1..size-8, bit 8 en
-//	  columna 7, bits 9..14 en columnas 5..0 (LSB a la derecha).
+//	horizontal (row 8): bits 0..7 en templateColumns size-1..size-8, bit 8 en
+//	  columna 7, bits 9..14 en templateColumns 5..0 (LSB a la derecha).
 //
 // Más el módulo oscuro fijo en (size-8, 8).
 func placeFormatInfo(m [][]bool, mask, size int) {
@@ -239,7 +239,7 @@ func formatInfo(mask int) int {
 }
 
 // placeVersionInfo escribe los 18 bits (v>=7) en sus dos bloques de 6x3:
-// bloque superior-derecho fila-major con el bit MENOS significativo en
+// bloque superior-derecho row-major con el bit MENOS significativo en
 // (0, size-11); el inferior-izquierdo es su traspuesto (ISO 18004).
 func placeVersionInfo(m [][]bool, version, size int) {
 	vi := versionInfo(version)
@@ -266,7 +266,7 @@ func penalty(m [][]bool) int {
 	size := len(m)
 	p := 0
 
-	// regla 1: 5+ módulos iguales seguidos en filas/columnas
+	// regla 1: 5+ módulos iguales seguidos en filas/templateColumns
 	for i := 0; i < size; i++ {
 		p += runs(m, i, true)
 		p += runs(m, i, false)
@@ -334,13 +334,13 @@ func penalty(m [][]bool) int {
 	return p
 }
 
-func runs(m [][]bool, i int, fila bool) int {
+func runs(m [][]bool, i int, row bool) int {
 	size := len(m)
 	p := 0
 	run, prev := 0, -1
 	for j := 0; j < size; j++ {
 		var v int
-		if fila {
+		if row {
 			v = b2i(m[i][j])
 		} else {
 			v = b2i(m[j][i])

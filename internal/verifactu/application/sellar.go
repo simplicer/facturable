@@ -18,20 +18,20 @@ type SistemaLocal struct {
 	Version, NumeroInstalacion    string
 }
 
-// BorradorAlta es la factura validada por la ingesta, lista para sellarse.
-type BorradorAlta struct {
-	NumeroSerie, Fecha, Tipo, Descripcion string
-	NIFCliente, NombreCliente             string
-	Desgloses                             []DesgloseAlta
+// InvoiceDraft es la factura validada por la ingesta, lista para sellarse.
+type InvoiceDraft struct {
+	Series, Date, Tipo, Description string
+	ClientNIF, ClientName           string
+	Desgloses                       []BreakdownDraft
 }
 
-// DesgloseAlta es una línea de IVA del borrador.
-type DesgloseAlta struct {
-	TipoImpositivo, Base, Cuota string
+// BreakdownDraft es una línea de IVA del borrador.
+type BreakdownDraft struct {
+	TaxRate, Base, Cuota string
 }
 
 // EstadoCadena es la foto del libro que el llamador saca del almacén:
-//   - Last: identidad (serie/fecha/huella) del último chainRow, n-1.
+//   - Last: identidad (series/fecha/huella) del último chainRow, n-1.
 //   - DeclaradoPorUltimo: el enlace que n-1 incrustó hacia n-2 (nil si n-1
 //     fue el primero). Es lo que permite detectar manipulaciones.
 //   - Previous: identidad real de n-2 según el almacén (nil si no existe).
@@ -43,14 +43,14 @@ type EstadoCadena struct {
 	Previous           *EnlaceTriple
 }
 
-// EnlaceTriple identifica un chainRow: serie, fecha y huella.
-type EnlaceTriple struct{ Serie, Fecha, Huella string }
+// EnlaceTriple identifica un chainRow: series, fecha y huella.
+type EnlaceTriple struct{ Serie, Date, Huella string }
 
 // ResultadoSellar es todo lo que hay que persistir tras sellar.
 type ResultadoSellar struct {
 	XML string // sobre SOAP completo del chainRow (envío unitario)
 
-	NIF, Serie, Fecha, Tipo                string
+	NIF, Serie, Date, Tipo                 string
 	Cuota, Importe, Generado, Huella       string
 	EnlaceSerie, EnlaceFecha, EnlaceHuella string // vacíos si es el primero
 	EsPrimero                              bool
@@ -59,16 +59,16 @@ type ResultadoSellar struct {
 // SellarAlta convierte un borrador en chainRow de facturación encadenado
 // con su XML de remisión. Verifica el salto n-1/n-2 antes de sellar
 // (FAQ AEAT de trazabilidad) y calcula totales por suma exacta en céntimos.
-func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal, cadena EstadoCadena, ahora time.Time) (*ResultadoSellar, error) {
+func SellarAlta(emisorNIF, emisorNombre string, b InvoiceDraft, sis SistemaLocal, cadena EstadoCadena, ahora time.Time) (*ResultadoSellar, error) {
 	nif, err := domain.NewNIF(emisorNIF)
 	if err != nil {
 		return nil, fmt.Errorf("NIF del emisor: %v", err)
 	}
-	serie, err := domain.NewSerieNumero(b.NumeroSerie)
+	series, err := domain.NewSerieNumero(b.Series)
 	if err != nil {
 		return nil, fmt.Errorf("número de factura: %v", err)
 	}
-	fecha, err := domain.NewFechaExpedicion(b.Fecha)
+	fecha, err := domain.NewFechaExpedicion(b.Date)
 	if err != nil {
 		return nil, fmt.Errorf("fecha: %v", err)
 	}
@@ -83,11 +83,11 @@ func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal
 	for _, d := range b.Desgloses {
 		base, err := toCents(d.Base)
 		if err != nil {
-			return nil, fmt.Errorf("base imponible de %s: %v", d.TipoImpositivo, err)
+			return nil, fmt.Errorf("base imponible de %s: %v", d.TaxRate, err)
 		}
 		cuota, err := toCents(d.Cuota)
 		if err != nil {
-			return nil, fmt.Errorf("cuota de %s: %v", d.TipoImpositivo, err)
+			return nil, fmt.Errorf("cuota de %s: %v", d.TaxRate, err)
 		}
 		baseCent += base
 		cuotaCent += cuota
@@ -95,16 +95,16 @@ func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal
 			Tax:                    "01", // IVA
 			RegimeKey:              "01", // régimen general
 			OperationQualification: "S1", // sujeta y no exenta
-			TaxRate:                normalizeDecimal(d.TipoImpositivo),
+			TaxRate:                normalizeDecimal(d.TaxRate),
 			TaxBase:                fromCents(base),
 			TaxFee:                 fromCents(cuota),
 		})
 	}
 	if len(lineas) == 0 {
-		return nil, fmt.Errorf("la factura %s no tiene desgloses de IVA", b.NumeroSerie)
+		return nil, fmt.Errorf("la factura %s no tiene desgloses de IVA", b.Series)
 	}
 	if len(lineas) > 12 {
-		return nil, fmt.Errorf("la factura %s supera los 12 desgloses admitidos por la AEAT", b.NumeroSerie)
+		return nil, fmt.Errorf("la factura %s supera los 12 desgloses admitidos por la AEAT", b.Series)
 	}
 
 	// Verificación del salto de cadena antes de generar la huella.
@@ -130,14 +130,14 @@ func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal
 		encadenamiento = xmlalta.Chaining{PreviousRecord: &xmlalta.PreviousRecord{
 			IssuerID:       nif.Value(),
 			Number:         ult.Serie.Value(),
-			ExpeditionDate: ult.Fecha.Fecha(),
+			ExpeditionDate: ult.Date.Date(),
 			Fingerprint:    ult.Huella.Value(),
 		}}
 	}
 
 	generado := domain.NewFechaHoraHusoFromTime(ahora)
 	huella, err := domain.HuellaRegistroAlta(domain.RegistroAltaHuella{
-		Emisor: nif, Serie: serie, Fecha: fecha, Tipo: tipo,
+		Emisor: nif, Serie: series, Date: fecha, Tipo: tipo,
 		Cuota:    mustTotal(fromCents(cuotaCent)),
 		Importe:  mustTotal(fromCents(baseCent + cuotaCent)),
 		Generado: generado, Previous: previousHuella,
@@ -147,15 +147,15 @@ func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal
 	}
 
 	reg := xmlalta.NewRegistrationRecord()
-	reg.InvoiceID = xmlalta.InvoiceID{IssuerID: nif.Value(), Number: serie.Value(), ExpeditionDate: fecha.Fecha()}
+	reg.InvoiceID = xmlalta.InvoiceID{IssuerID: nif.Value(), Number: series.Value(), ExpeditionDate: fecha.Date()}
 	reg.IssuerName = emisorNombre
 	reg.InvoiceType = tipo.String()
-	reg.OperationDescription = b.Descripcion
-	if b.NIFCliente != "" {
-		if _, err := domain.NewNIF(b.NIFCliente); err != nil {
+	reg.OperationDescription = b.Description
+	if b.ClientNIF != "" {
+		if _, err := domain.NewNIF(b.ClientNIF); err != nil {
 			return nil, fmt.Errorf("NIF del cliente: %v", err)
 		}
-		reg.Recipients = []xmlalta.Recipient{{Name: b.NombreCliente, TaxID: b.NIFCliente}}
+		reg.Recipients = []xmlalta.Recipient{{Name: b.ClientName, TaxID: b.ClientNIF}}
 	}
 	reg.Breakdown = lineas
 	reg.TotalTax = fromCents(cuotaCent)
@@ -180,14 +180,14 @@ func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal
 	}
 
 	res := &ResultadoSellar{
-		XML: xmlStr, NIF: nif.Value(), Serie: serie.Value(),
-		Fecha: fecha.Fecha(), Tipo: tipo.String(),
+		XML: xmlStr, NIF: nif.Value(), Serie: series.Value(),
+		Date: fecha.Date(), Tipo: tipo.String(),
 		Cuota: fromCents(cuotaCent), Importe: fromCents(baseCent + cuotaCent),
 		Generado: generado.ISO8601(), Huella: huella.Value(), EsPrimero: cadena.Last == nil,
 	}
 	if !res.EsPrimero {
 		res.EnlaceSerie = cadena.Last.Serie
-		res.EnlaceFecha = cadena.Last.Fecha
+		res.EnlaceFecha = cadena.Last.Date
 		res.EnlaceHuella = cadena.Last.Huella
 	}
 	return res, nil
@@ -196,7 +196,7 @@ func SellarAlta(emisorNIF, emisorNombre string, b BorradorAlta, sis SistemaLocal
 func toDomainLink(t EnlaceTriple) *domain.Enlace {
 	return &domain.Enlace{
 		Serie:  mustSerial(t.Serie),
-		Fecha:  mustDate(t.Fecha),
+		Date:   mustDate(t.Date),
 		Huella: mustHuella(t.Huella),
 	}
 }
@@ -206,7 +206,7 @@ func toDomainEnlace(t EnlaceTriple) *domain.Enlace { return toDomainLink(t) }
 func mustSerial(raw string) domain.SerieNumero {
 	s, err := domain.NewSerieNumero(raw)
 	if err != nil {
-		panic("serie inválida ya validada: " + err.Error())
+		panic("series inválida ya validada: " + err.Error())
 	}
 	return s
 }

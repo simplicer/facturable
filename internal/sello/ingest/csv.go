@@ -3,7 +3,7 @@
 // numero_serie group into one invoice (column names are end-user facing
 // Spanish by design).
 //
-//	Cabecera obligatoria:
+//	Required header:
 //	numero_serie,fecha,tipo,descripcion,nif_cliente,nombre_cliente,tipo_impositivo,base,cuota
 package ingest
 
@@ -18,170 +18,172 @@ import (
 	"facturable/internal/verifactu/domain"
 )
 
-// Columnas de la plantilla (kebab/snake insensible).
-var columnas = []string{"numero_serie", "fecha", "tipo", "descripcion", "nif_cliente", "nombre_cliente", "tipo_impositivo", "base", "cuota"}
+// templateColumns of the documented CSV template (name matching is
+// case/separator insensitive).
+var templateColumns = []string{"numero_serie", "fecha", "tipo", "descripcion", "nif_cliente", "nombre_cliente", "tipo_impositivo", "base", "cuota"}
 
-// DesgloseBorrador es una línea de IVA de la factura.
-type DesgloseBorrador struct {
-	TipoImpositivo string // p.ej. "21"
-	Base           string // "100.00"
-	Cuota          string // "21.00"
+// BreakdownDraft is one VAT line of a draft.
+type BreakdownDraft struct {
+	TaxRate string `json:"tipo_impositivo"` // e.g. "21"
+	Base    string `json:"base"`            // "100.00"
+	Fee     string `json:"cuota"`           // "21.00"
 }
 
-// Borrador es una factura lista para sellar.
-type Borrador struct {
-	NumeroSerie   string
-	Fecha         string // DD-MM-AAAA
-	Tipo          string // F1, R1…
-	Descripcion   string
-	NIFCliente    string // vacío permitido en simplificadas
-	NombreCliente string
-	Desgloses     []DesgloseBorrador
-	Fila          int // primera fila del CSV donde apareció
+// Draft is a validated invoice ready to stamp: the JSON wire format for
+// the relay/API ingestion and the internal shape of grouped CSV rows.
+type Draft struct {
+	Series      string           `json:"numero_serie"`
+	Date        string           `json:"fecha"` // DD-MM-AAAA
+	Tipo        string           `json:"tipo"`  // F1, R1…
+	Description string           `json:"descripcion"`
+	ClientNIF   string           `json:"nif_cliente,omitempty"`
+	ClientName  string           `json:"nombre_cliente,omitempty"`
+	Breakdowns  []BreakdownDraft `json:"desgloses"`
 
-	desglosesFallidos bool // alguna fila de desglose suya ya reportó error
+	Fila             int  `json:"-"` // first CSV row where it appeared
+	brokenBreakdowns bool `json:"-"` // some breakdown row already errored
 }
 
-// ErrorFila localiza un problem de datos en el CSV original.
-type ErrorFila struct {
-	Fila    int
-	Campo   string
-	Detalle string
+// RowError localizes a data problem in the source CSV row.
+type RowError struct {
+	Fila    int    `json:"fila"`
+	Campo   string `json:"campo"`
+	Detalle string `json:"detalle"`
 }
 
-func (e ErrorFila) Error() string {
+func (e RowError) Error() string {
 	return fmt.Sprintf("fila %d, campo %s: %s", e.Fila, e.Campo, e.Detalle)
 }
 
-// LeerCSV valida y agrupa un CSV completo. Devuelve los borradores válidos
-// y los errores por fila (no aborta todo el fichero por una fila mala).
-func LeerCSV(r io.Reader) (borradores []Borrador, errores []ErrorFila) {
-	lectura := csv.NewReader(r)
-	lectura.FieldsPerRecord = -1
+// ReadCSV validates and groups a whole CSV. It returns the valid drafts and
+// the per-row errors (one bad row does not abort the file).
+func ReadCSV(r io.Reader) (drafts []Draft, errores []RowError) {
+	reader := csv.NewReader(r)
+	reader.FieldsPerRecord = -1
 
-	cabecera, err := lectura.Read()
+	header, err := reader.Read()
 	if err == io.EOF {
-		return nil, []ErrorFila{{Fila: 1, Campo: "cabecera", Detalle: "el fichero está vacío"}}
+		return nil, []RowError{{Fila: 1, Campo: "cabecera", Detalle: "el fichero está vacío"}}
 	}
 	if err != nil {
-		return nil, []ErrorFila{{Fila: 1, Campo: "cabecera", Detalle: "no se pudo leer el CSV: " + err.Error()}}
+		return nil, []RowError{{Fila: 1, Campo: "cabecera", Detalle: "no se pudo leer el CSV: " + err.Error()}}
 	}
-	indice, err := columnIndex(cabecera)
+	index, err := columnIndex(header)
 	if err != nil {
-		return nil, []ErrorFila{{Fila: 1, Campo: "cabecera", Detalle: err.Error()}}
+		return nil, []RowError{{Fila: 1, Campo: "cabecera", Detalle: err.Error()}}
 	}
 
-	porSerie := map[string]*Borrador{}
-	orden := []string{}
+	bySeries := map[string]*Draft{}
+	orderSeen := []string{}
 
-	numFila := 1
+	rowNum := 1
 	for {
-		fila, err := lectura.Read()
+		row, err := reader.Read()
 		if err == io.EOF {
 			break
 		}
-		numFila++
+		rowNum++
 		if err != nil {
-			errores = append(errores, ErrorFila{Fila: numFila, Campo: "fila", Detalle: err.Error()})
+			errores = append(errores, RowError{Fila: rowNum, Campo: "fila", Detalle: err.Error()})
 			continue
 		}
-		if emptyRow(fila) {
+		if isEmptyRow(row) {
 			continue
 		}
-		if len(fila) != len(columnas) {
-			errores = append(errores, ErrorFila{Fila: numFila, Campo: "fila",
-				Detalle: fmt.Sprintf("se esperaban %d columnas y hay %d (usa la plantilla)", len(columnas), len(fila))})
+		if len(row) != len(templateColumns) {
+			errores = append(errores, RowError{Fila: rowNum, Campo: "fila",
+				Detalle: fmt.Sprintf("se esperaban %d columnas y hay %d (usa la plantilla)", len(templateColumns), len(row))})
 			continue
 		}
 
-		serie := strings.TrimSpace(fila[indice["numero_serie"]])
-		b, ok := porSerie[serie]
+		series := strings.TrimSpace(row[index["numero_serie"]])
+		d, ok := bySeries[series]
 		if !ok {
-			b = &Borrador{
-				NumeroSerie:   serie,
-				Fecha:         strings.TrimSpace(fila[indice["fecha"]]),
-				Tipo:          strings.ToUpper(strings.TrimSpace(fila[indice["tipo"]])),
-				Descripcion:   strings.TrimSpace(fila[indice["descripcion"]]),
-				NIFCliente:    strings.TrimSpace(fila[indice["nif_cliente"]]),
-				NombreCliente: strings.TrimSpace(fila[indice["nombre_cliente"]]),
-				Fila:          numFila,
+			d = &Draft{
+				Series:      series,
+				Date:        strings.TrimSpace(row[index["fecha"]]),
+				Tipo:        strings.ToUpper(strings.TrimSpace(row[index["tipo"]])),
+				Description: strings.TrimSpace(row[index["descripcion"]]),
+				ClientNIF:   strings.TrimSpace(row[index["nif_cliente"]]),
+				ClientName:  strings.TrimSpace(row[index["nombre_cliente"]]),
+				Fila:        rowNum,
 			}
-			if e := validateRowHeader(b, numFila); e != nil {
+			if e := validateRowHeader(d, rowNum); e != nil {
 				errores = append(errores, *e)
-				continue // cabecera inválida: el borrador no entra
+				continue // invalid header row: the draft is not kept
 			}
-			porSerie[serie] = b
-			orden = append(orden, serie)
+			bySeries[series] = d
+			orderSeen = append(orderSeen, series)
 		}
 
-		d := DesgloseBorrador{
-			TipoImpositivo: strings.TrimSpace(fila[indice["tipo_impositivo"]]),
-			Base:           strings.TrimSpace(fila[indice["base"]]),
-			Cuota:          strings.TrimSpace(fila[indice["cuota"]]),
+		b := BreakdownDraft{
+			TaxRate: strings.TrimSpace(row[index["tipo_impositivo"]]),
+			Base:    strings.TrimSpace(row[index["base"]]),
+			Fee:     strings.TrimSpace(row[index["cuota"]]),
 		}
-		if err := validateBreakdown(d); err != nil {
-			errores = append(errores, ErrorFila{Fila: numFila, Campo: "desglose", Detalle: err.Error()})
-			b.desglosesFallidos = true
+		if err := validateBreakdown(b); err != nil {
+			errores = append(errores, RowError{Fila: rowNum, Campo: "desglose", Detalle: err.Error()})
+			d.brokenBreakdowns = true
 			continue
 		}
-		b.Desgloses = append(b.Desgloses, d)
+		d.Breakdowns = append(d.Breakdowns, b)
 	}
 
-	sort.Slice(orden, func(i, j int) bool { return porSerie[orden[i]].Fila < porSerie[orden[j]].Fila })
-	for _, s := range orden {
-		b := porSerie[s]
-		if len(b.Desgloses) == 0 {
-			if !b.desglosesFallidos {
-				errores = append(errores, ErrorFila{Fila: b.Fila, Campo: "desglose",
+	sort.Slice(orderSeen, func(i, j int) bool { return bySeries[orderSeen[i]].Fila < bySeries[orderSeen[j]].Fila })
+	for _, s := range orderSeen {
+		d := bySeries[s]
+		if len(d.Breakdowns) == 0 {
+			if !d.brokenBreakdowns {
+				errores = append(errores, RowError{Fila: d.Fila, Campo: "desglose",
 					Detalle: fmt.Sprintf("la factura %s no tiene ningún desglose de IVA", s)})
 			}
 			continue
 		}
-		borradores = append(borradores, *b)
+		drafts = append(drafts, *d)
 	}
-	return borradores, errores
+	return drafts, errores
 }
 
-func validateRowHeader(b *Borrador, numFila int) *ErrorFila {
-	if _, err := domain.NewSerieNumero(b.NumeroSerie); err != nil {
-		return &ErrorFila{Fila: numFila, Campo: "numero_serie", Detalle: err.Error()}
+func validateRowHeader(d *Draft, rowNum int) *RowError {
+	if _, err := domain.NewSerieNumero(d.Series); err != nil {
+		return &RowError{Fila: rowNum, Campo: "numero_serie", Detalle: err.Error()}
 	}
-	if _, err := domain.NewFechaExpedicion(b.Fecha); err != nil {
-		return &ErrorFila{Fila: numFila, Campo: "fecha", Detalle: err.Error()}
+	if _, err := domain.NewFechaExpedicion(d.Date); err != nil {
+		return &RowError{Fila: rowNum, Campo: "fecha", Detalle: err.Error()}
 	}
-	if _, err := domain.NewTipoFactura(b.Tipo); err != nil {
-		return &ErrorFila{Fila: numFila, Campo: "tipo", Detalle: err.Error()}
+	if _, err := domain.NewTipoFactura(d.Tipo); err != nil {
+		return &RowError{Fila: rowNum, Campo: "tipo", Detalle: err.Error()}
 	}
-	if b.NIFCliente != "" {
-		if _, err := domain.NewNIF(b.NIFCliente); err != nil {
-			return &ErrorFila{Fila: numFila, Campo: "nif_cliente", Detalle: err.Error()}
+	if d.ClientNIF != "" {
+		if _, err := domain.NewNIF(d.ClientNIF); err != nil {
+			return &RowError{Fila: rowNum, Campo: "nif_cliente", Detalle: err.Error()}
 		}
 	}
 	return nil
 }
 
-func validateBreakdown(d DesgloseBorrador) error {
-	tipo := strings.Replace(d.TipoImpositivo, ",", ".", 1)
+func validateBreakdown(b BreakdownDraft) error {
+	tipo := strings.Replace(b.TaxRate, ",", ".", 1)
 	if _, err := strconv.ParseFloat(tipo, 64); err != nil {
-		return fmt.Errorf("tipo impositivo %q no es un número", d.TipoImpositivo)
+		return fmt.Errorf("tipo impositivo %q no es un número", b.TaxRate)
 	}
-	if _, err := domain.NewImporte(d.Base); err != nil {
+	if _, err := domain.NewImporte(b.Base); err != nil {
 		return fmt.Errorf("base: %v", err)
 	}
-	if _, err := domain.NewImporte(d.Cuota); err != nil {
+	if _, err := domain.NewImporte(b.Fee); err != nil {
 		return fmt.Errorf("cuota: %v", err)
 	}
 	return nil
 }
 
-func columnIndex(cabecera []string) (map[string]int, error) {
+func columnIndex(header []string) (map[string]int, error) {
 	out := map[string]int{}
-	for i, c := range cabecera {
+	for i, c := range header {
 		out[norm(c)] = i
 	}
-	for _, want := range columnas {
+	for _, want := range templateColumns {
 		if _, ok := out[want]; !ok {
-			return nil, fmt.Errorf("falta la columna %q en la cabecera (plantilla: %s)", want, strings.Join(columnas, ","))
+			return nil, fmt.Errorf("falta la columna %q en la cabecera (plantilla: %s)", want, strings.Join(templateColumns, ","))
 		}
 	}
 	return out, nil
@@ -190,12 +192,11 @@ func columnIndex(cabecera []string) (map[string]int, error) {
 func norm(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.ReplaceAll(s, " ", "_")
-	s = strings.ReplaceAll(s, "-", "_")
-	return s
+	return strings.ReplaceAll(s, "-", "_")
 }
 
-func emptyRow(fila []string) bool {
-	for _, c := range fila {
+func isEmptyRow(row []string) bool {
+	for _, c := range row {
 		if strings.TrimSpace(c) != "" {
 			return false
 		}

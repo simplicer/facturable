@@ -23,7 +23,7 @@ type BreakdownLine struct {
 	Tax                    string `xml:"sum1:Impuesto,omitempty"`            // optional, e.g. "01" IVA
 	RegimeKey              string `xml:"sum1:ClaveRegimen"`                  // e.g. "01"
 	OperationQualification string `xml:"sum1:CalificacionOperacion"`         // e.g. "S1"
-	TaxRate                string `xml:"sum1:TipoImpositivo,omitempty"`      // optional decimal
+	TaxRate                string `xml:"sum1:TipoImpositivo,omitempty"`             // optional decimal
 	TaxBase                string `xml:"sum1:BaseImponibleOimporteNoSujeto"` // decimal
 	TaxFee                 string `xml:"sum1:CuotaRepercutida"`              // decimal
 }
@@ -113,7 +113,7 @@ func validateInvoiceID(id InvoiceID) []error {
 		errs = append(errs, errors.New("el identificador del emisor de la factura (IDEmisorFactura) es obligatorio"))
 	}
 	if id.Number == "" {
-		errs = append(errs, errors.New("el número de serie de la factura (NumSerieFactura) es obligatorio"))
+		errs = append(errs, errors.New("el número de series de la factura (NumSerieFactura) es obligatorio"))
 	}
 	if !validDate(id.ExpeditionDate) {
 		errs = append(errs, fmt.Errorf("la fecha de expedición de la factura debe tener formato DD-MM-AAAA: %q", id.ExpeditionDate))
@@ -138,7 +138,7 @@ func validateBreakdown(lines []BreakdownLine) []error {
 			errs = append(errs, fmt.Errorf("el detalle %d del desglose debe indicar la calificación de la operación (CalificacionOperacion)", position))
 		}
 		if line.TaxRate != "" && !validAmount(line.TaxRate) {
-			errs = append(errs, fmt.Errorf("el detalle %d del desglose tiene un tipo impositivo (TipoImpositivo) no válido: %q", position, line.TaxRate))
+			errs = append(errs, fmt.Errorf("el detalle %d del desglose tiene un tipo impositivo (TaxRate) no válido: %q", position, line.TaxRate))
 		}
 		errs = append(errs, validateAmountField(line.TaxBase, fmt.Sprintf("el detalle %d del desglose tiene una base imponible (BaseImponibleOimporteNoSujeto)", position))...)
 		errs = append(errs, validateAmountField(line.TaxFee, fmt.Sprintf("el detalle %d del desglose tiene una cuota repercutida (CuotaRepercutida)", position))...)

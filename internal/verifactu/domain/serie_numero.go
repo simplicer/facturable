@@ -20,7 +20,7 @@ type SerieNumero struct {
 func NewSerieNumero(raw string) (SerieNumero, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
-		return SerieNumero{}, fmt.Errorf("el número de factura (número y serie) no puede estar vacío")
+		return SerieNumero{}, fmt.Errorf("el número de factura (número y series) no puede estar vacío")
 	}
 	if len(value) > maxSerieNumeroLength {
 		return SerieNumero{}, fmt.Errorf(

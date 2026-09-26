@@ -255,7 +255,7 @@ func TestCancellationRecordValidation(t *testing.T) {
 		{
 			name:     "missing cancelled invoice number",
 			mutate:   func(r *CancellationRecord) { r.InvoiceID.Number = "" },
-			wantMsgs: []string{"el número de serie de la factura anulada (NumSerieFacturaAnulada) es obligatorio"},
+			wantMsgs: []string{"el número de series de la factura anulada (NumSerieFacturaAnulada) es obligatorio"},
 		},
 		{
 			name: "bad cancelled expedition date",

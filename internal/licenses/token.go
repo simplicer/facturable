@@ -110,7 +110,7 @@ func Verify(pub ed25519.PublicKey, token string) (License, error) {
 	var head tokenHeader
 	rawHead, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil || json.Unmarshal(rawHead, &head) != nil {
-		return License{}, fmt.Errorf("%w: cabecera de token ilegible", ErrInvalidToken)
+		return License{}, fmt.Errorf("%w: header de token ilegible", ErrInvalidToken)
 	}
 	if head.Alg != tokenAlg || head.Typ != tokenTyp {
 		return License{}, fmt.Errorf("%w: token con algoritmo o tipo no soportados (%s/%s)", ErrInvalidToken, head.Alg, head.Typ)

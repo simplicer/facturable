@@ -22,7 +22,7 @@ func altaFixture(t *testing.T) RegistroAltaHuella {
 	return RegistroAltaHuella{
 		Emisor:   mustNIF(t, "B72877814"),
 		Serie:    mustSerie(t, "GITHUB-EJ-003"),
-		Fecha:    mustFecha(t, "04-11-2024"),
+		Date:     mustFecha(t, "04-11-2024"),
 		Tipo:     FacturaCompleta,
 		Cuota:    mustImporte(t, "21.4"),
 		Importe:  mustImporte(t, "131.4"),
@@ -50,7 +50,7 @@ func TestHuellaRegistroAltaOfficialCaso1(t *testing.T) {
 	input := RegistroAltaHuella{
 		Emisor:   mustNIF(t, "89890001K"),
 		Serie:    mustSerie(t, "12345678/G33"),
-		Fecha:    mustFecha(t, "01-01-2024"),
+		Date:     mustFecha(t, "01-01-2024"),
 		Tipo:     FacturaCompleta,
 		Cuota:    mustImporte(t, "12.35"),
 		Importe:  mustImporte(t, "123.45"),
@@ -71,7 +71,7 @@ func TestHuellaRegistroAltaOfficialCaso2(t *testing.T) {
 	input := RegistroAltaHuella{
 		Emisor:   mustNIF(t, "89890001K"),
 		Serie:    mustSerie(t, "12345679/G34"),
-		Fecha:    mustFecha(t, "01-01-2024"),
+		Date:     mustFecha(t, "01-01-2024"),
 		Tipo:     FacturaCompleta,
 		Cuota:    mustImporte(t, "12.35"),
 		Importe:  mustImporte(t, "123.45"),
@@ -93,7 +93,7 @@ func TestHuellaRegistroAnulacionOfficialCaso3(t *testing.T) {
 	input := RegistroAnulacionHuella{
 		Emisor:   mustNIF(t, "89890001K"),
 		Serie:    mustSerie(t, "12345679/G34"),
-		Fecha:    mustFecha(t, "01-01-2024"),
+		Date:     mustFecha(t, "01-01-2024"),
 		Generado: mustHuso(t, "2024-01-01T19:20:40+01:00"),
 		Previous: mustHuella(t, vectorCaso2),
 	}
@@ -131,7 +131,7 @@ func TestAnulacionHuellaInputExactString(t *testing.T) {
 	input := RegistroAnulacionHuella{
 		Emisor:   mustNIF(t, "89890001K"),
 		Serie:    mustSerie(t, "12345679/G34"),
-		Fecha:    mustFecha(t, "01-01-2024"),
+		Date:     mustFecha(t, "01-01-2024"),
 		Generado: mustHuso(t, "2024-01-01T19:20:40+01:00"),
 		Previous: mustHuella(t, vectorCaso2),
 	}
@@ -166,8 +166,8 @@ func TestHuellaRegistroAltaRejectsIncompleteRecords(t *testing.T) {
 		mutate func(*RegistroAltaHuella)
 	}{
 		{name: "missing emisor", mutate: func(r *RegistroAltaHuella) { r.Emisor = NIF{} }},
-		{name: "missing serie", mutate: func(r *RegistroAltaHuella) { r.Serie = SerieNumero{} }},
-		{name: "missing fecha", mutate: func(r *RegistroAltaHuella) { r.Fecha = FechaExpedicion{} }},
+		{name: "missing series", mutate: func(r *RegistroAltaHuella) { r.Serie = SerieNumero{} }},
+		{name: "missing fecha", mutate: func(r *RegistroAltaHuella) { r.Date = FechaExpedicion{} }},
 		{name: "missing tipo", mutate: func(r *RegistroAltaHuella) { r.Tipo = "" }},
 		{name: "missing cuota", mutate: func(r *RegistroAltaHuella) { r.Cuota = CuotaTotal{} }},
 		{name: "missing importe", mutate: func(r *RegistroAltaHuella) { r.Importe = ImporteTotal{} }},
@@ -211,8 +211,8 @@ func TestHuellaIsSensitiveToEveryField(t *testing.T) {
 		mutate func(*RegistroAltaHuella)
 	}{
 		{name: "emisor", mutate: func(r *RegistroAltaHuella) { r.Emisor = mustNIF(t, "B44531218") }},
-		{name: "serie", mutate: func(r *RegistroAltaHuella) { r.Serie = mustSerie(t, "GITHUB-EJ-004") }},
-		{name: "fecha", mutate: func(r *RegistroAltaHuella) { r.Fecha = mustFecha(t, "05-11-2024") }},
+		{name: "series", mutate: func(r *RegistroAltaHuella) { r.Serie = mustSerie(t, "GITHUB-EJ-004") }},
+		{name: "fecha", mutate: func(r *RegistroAltaHuella) { r.Date = mustFecha(t, "05-11-2024") }},
 		{name: "tipo", mutate: func(r *RegistroAltaHuella) { r.Tipo = FacturaSimplificada }},
 		{name: "cuota", mutate: func(r *RegistroAltaHuella) { r.Cuota = mustImporte(t, "21.5") }},
 		{name: "importe", mutate: func(r *RegistroAltaHuella) { r.Importe = mustImporte(t, "131.5") }},
@@ -241,7 +241,7 @@ func TestAnulacionHuellaSensitiveToFields(t *testing.T) {
 	base := RegistroAnulacionHuella{
 		Emisor:   mustNIF(t, "89890001K"),
 		Serie:    mustSerie(t, "12345679/G34"),
-		Fecha:    mustFecha(t, "01-01-2024"),
+		Date:     mustFecha(t, "01-01-2024"),
 		Generado: mustHuso(t, "2024-01-01T19:20:40+01:00"),
 		Previous: mustHuella(t, vectorCaso2),
 	}
@@ -251,8 +251,8 @@ func TestAnulacionHuellaSensitiveToFields(t *testing.T) {
 	}
 	mutations := map[string]func(*RegistroAnulacionHuella){
 		"emisor":   func(r *RegistroAnulacionHuella) { r.Emisor = mustNIF(t, "B72877814") },
-		"serie":    func(r *RegistroAnulacionHuella) { r.Serie = mustSerie(t, "12345678/G33") },
-		"fecha":    func(r *RegistroAnulacionHuella) { r.Fecha = mustFecha(t, "02-01-2024") },
+		"series":   func(r *RegistroAnulacionHuella) { r.Serie = mustSerie(t, "12345678/G33") },
+		"fecha":    func(r *RegistroAnulacionHuella) { r.Date = mustFecha(t, "02-01-2024") },
 		"generado": func(r *RegistroAnulacionHuella) { r.Generado = mustHuso(t, "2024-01-01T19:20:41+01:00") },
 		"anterior": func(r *RegistroAnulacionHuella) { r.Previous = Huella{} },
 	}
@@ -282,7 +282,7 @@ func TestHuellaChainOfN(t *testing.T) {
 		record := RegistroAltaHuella{
 			Emisor:   mustNIF(t, "B72877814"),
 			Serie:    mustSerie(t, "TEST-2024-"+strconv.Itoa(i+1)),
-			Fecha:    mustFecha(t, "01-01-2024"),
+			Date:     mustFecha(t, "01-01-2024"),
 			Tipo:     FacturaCompleta,
 			Cuota:    mustImporte(t, "12.35"),
 			Importe:  mustImporte(t, "123.45"),
@@ -335,7 +335,7 @@ func TestHuellaChainOfN(t *testing.T) {
 	anulacion := RegistroAnulacionHuella{
 		Emisor:   mustNIF(t, "B72877814"),
 		Serie:    mustSerie(t, "TEST-2024-001"),
-		Fecha:    mustFecha(t, "01-01-2024"),
+		Date:     mustFecha(t, "01-01-2024"),
 		Generado: mustHuso(t, mustInstant(total)),
 		Previous: huellas[total-1],
 	}

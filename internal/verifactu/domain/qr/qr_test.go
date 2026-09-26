@@ -96,7 +96,7 @@ func TestVerificationURLErrorsAreSpanish(t *testing.T) {
 			name:    "missing invoice number",
 			env:     Testing,
 			query:   Query{NIF: "B72877814", ExpeditionDate: "04-11-2024", TotalAmount: "1"},
-			wantMsg: "número de serie de la factura es obligatorio",
+			wantMsg: "número de series de la factura es obligatorio",
 		},
 		{
 			name:    "bad date format",
