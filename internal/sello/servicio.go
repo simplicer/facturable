@@ -67,6 +67,25 @@ func (s *Servicio) IngestaCSV(r io.Reader) (*ResultadoIngesta, error) {
 	return res, nil
 }
 
+// Anular genera y guarda el registro de anulación de una factura.
+func (s *Servicio) Anular(serie, fecha string) (int64, error) {
+	estado, err := s.estadoCadena()
+	if err != nil {
+		return 0, err
+	}
+	res, err := application.SellarAnulacion(s.EmisorNIF, serie, fecha, s.Sistema, estado, time.Now())
+	if err != nil {
+		return 0, err
+	}
+	id, err := s.Store.Guardar(persistencia.RegistroGuardado{
+		NIF: res.NIF, Serie: res.Serie, Fecha: res.Fecha, Tipo: res.Tipo,
+		Generado: res.Generado, Cuota: "0.00", Importe: "0.00",
+		Huella: res.Huella, XML: res.XML,
+		EnlaceSerie: res.EnlaceSerie, EnlaceFecha: res.EnlaceFecha, EnlaceHuella: res.EnlaceHuella,
+	})
+	return id, err
+}
+
 // EnviarPendientes remite los registros pendientes respetando el control
 // de flujo (espera 60 s o acumulado de lote) y registra cada respuesta.
 func (s *Servicio) EnviarPendientes(ctx context.Context) (int, error) {
