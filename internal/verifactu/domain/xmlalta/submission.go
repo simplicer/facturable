@@ -18,10 +18,10 @@ import (
 // section 9.1.1). The PDF text wraps the URLs across lines; here they are
 // joined as the schema names them.
 const (
-	NamespaceSOAPEnvelope = "http://schemas.xmlsoap.org/soap/envelope/"
-	NamespaceSuministroLR = "https://www2.agenciatributaria.gob.es/static_files/common/internet/dep/aplicaciones/es/aeat/tike/cont/ws/SuministroLR.xsd"
+	NamespaceSOAPEnvelope   = "http://schemas.xmlsoap.org/soap/envelope/"
+	NamespaceSuministroLR   = "https://www2.agenciatributaria.gob.es/static_files/common/internet/dep/aplicaciones/es/aeat/tike/cont/ws/SuministroLR.xsd"
 	NamespaceSuministroInfo = "https://www2.agenciatributaria.gob.es/static_files/common/internet/dep/aplicaciones/es/aeat/tike/cont/ws/SuministroInformacion.xsd"
-	NamespaceXMLDSig      = "http://www.w3.org/2000/09/xmldsig#"
+	NamespaceXMLDSig        = "http://www.w3.org/2000/09/xmldsig#"
 )
 
 // Fixed values of the 1.0 schema.

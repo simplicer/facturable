@@ -20,8 +20,8 @@ func (e Enlace) IsZero() bool {
 // the next one: its own identity plus the enlace it declared towards its
 // predecessor (nil when n-1 was the first record of the chain).
 type RegistroVigente struct {
-	Enlace      // identity of n-1 itself (series, date, own huella).
-	Referencia  *Enlace // what n-1 declared about n-2; nil if n-1 was first.
+	Enlace             // identity of n-1 itself (series, date, own huella).
+	Referencia *Enlace // what n-1 declared about n-2; nil if n-1 was first.
 }
 
 // VerificarSalto checks the chain link between n-2 and n-1 exactly as the

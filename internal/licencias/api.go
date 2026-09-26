@@ -77,9 +77,9 @@ func NuevaAPI(db *sql.DB, priv ed25519.PrivateKey) (*API, error) {
 func (a *API) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/licenses/{id}", a.put)
 	mux.HandleFunc("GET /v1/licenses/{id}", a.get)
-	// Nota: el mux estándar de Go no admite el sufijo ":action" en un
-	// segmento con wildcard; se usa la subruta /check (equivalente).
-	mux.HandleFunc("GET /v1/licenses/{id}/check", a.check)
+	// Recurso derivado sustantivo en vez de sufijo :check (el mux de Go no
+	// admite wildcards con sufijo, y "validity" es más resource-oriented).
+	mux.HandleFunc("GET /v1/licenses/{id}/validity", a.validity)
 }
 
 type peticionLicencia struct {
@@ -155,9 +155,10 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-// check aplica la regla nunca-rehén: sellar caduca con gracia; abrir/exportar
-// jamás se bloquea (Gate del paquete).
-func (a *API) check(w http.ResponseWriter, r *http.Request) {
+// validity es el recurso derivado "validez de la licencia": sellar caduca con
+// gracia; abrir/exportar jamás se bloquea (Gate del paquete). Sustantivo, no
+// acción: el verbo HTTP (GET) ya es la acción.
+func (a *API) validity(w http.ResponseWriter, r *http.Request) {
 	lic, _, ok := a.porID(w, r)
 	if !ok {
 		return

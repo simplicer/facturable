@@ -17,7 +17,7 @@ type CancelledInvoiceID struct {
 // (RegistroAnulacion): it cancels a previously issued invoice and is chained
 // like any other record. Records are immutable once remitted.
 type CancellationRecord struct {
-	Version           string             `xml:"sum1:IDVersion"`            // fixed "1.0"
+	Version           string             `xml:"sum1:IDVersion"` // fixed "1.0"
 	InvoiceID         CancelledInvoiceID `xml:"sum1:IDFactura"`
 	Subsanacion       string             `xml:"sum1:Subsanacion,omitempty"`   // optional "S"
 	PreviousRejection string             `xml:"sum1:RechazoPrevio,omitempty"` // optional "S"

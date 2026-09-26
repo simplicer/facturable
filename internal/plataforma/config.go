@@ -7,19 +7,24 @@ import (
 
 // Config is the whole runtime configuration (etc/config.json schema).
 type Config struct {
-	Env    string        `json:"env"`
-	API    APIConfig     `json:"api"`
-	Relay  RelayConfig   `json:"relay"`
-	AEAT   AEATConfig    `json:"aeat"`
-	Log    LogConfig     `json:"log"`
+	Env   string      `json:"env"`
+	API   APIConfig   `json:"api"`
+	Relay RelayConfig `json:"relay"`
+	AEAT  AEATConfig  `json:"aeat"`
+	Log   LogConfig   `json:"log"`
 }
 
-type APIConfig struct{ Listen string; Database string }
-type RelayConfig struct {
-	TTLDays            int `json:"ttl_days"`
-	PollIntervalSecs   int `json:"poll_interval_seconds"`
+type APIConfig struct {
+	Listen   string
+	Database string
 }
-type AEATConfig struct{ Environment string `json:"environment"` }
+type RelayConfig struct {
+	TTLDays          int `json:"ttl_days"`
+	PollIntervalSecs int `json:"poll_interval_seconds"`
+}
+type AEATConfig struct {
+	Environment string `json:"environment"`
+}
 type LogConfig struct {
 	Level string `json:"level"`
 	Dir   string `json:"dir"`

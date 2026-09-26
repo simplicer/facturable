@@ -79,7 +79,7 @@ func TestLicenciasCheckReglaNuncaRehen(t *testing.T) {
 	}
 
 	get := func() map[string]any {
-		resp, err := srv.Client().Get(srv.URL + "/v1/licenses/lic-x/check")
+		resp, err := srv.Client().Get(srv.URL + "/v1/licenses/lic-x/validity")
 		if err != nil {
 			t.Fatal(err)
 		}

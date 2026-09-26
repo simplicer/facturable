@@ -20,18 +20,18 @@ type Recipient struct {
 
 // BreakdownLine is one tax line of the invoice breakdown (DetalleDesglose).
 type BreakdownLine struct {
-	Tax                    string `xml:"sum1:Impuesto,omitempty"`                    // optional, e.g. "01" IVA
-	RegimeKey              string `xml:"sum1:ClaveRegimen"`                          // e.g. "01"
-	OperationQualification string `xml:"sum1:CalificacionOperacion"`                 // e.g. "S1"
-	TaxRate                string `xml:"sum1:TipoImpositivo,omitempty"`              // optional decimal
-	TaxBase                string `xml:"sum1:BaseImponibleOimporteNoSujeto"`         // decimal
-	TaxFee                 string `xml:"sum1:CuotaRepercutida"`                      // decimal
+	Tax                    string `xml:"sum1:Impuesto,omitempty"`            // optional, e.g. "01" IVA
+	RegimeKey              string `xml:"sum1:ClaveRegimen"`                  // e.g. "01"
+	OperationQualification string `xml:"sum1:CalificacionOperacion"`         // e.g. "S1"
+	TaxRate                string `xml:"sum1:TipoImpositivo,omitempty"`      // optional decimal
+	TaxBase                string `xml:"sum1:BaseImponibleOimporteNoSujeto"` // decimal
+	TaxFee                 string `xml:"sum1:CuotaRepercutida"`              // decimal
 }
 
 // Chaining links the record to the billing chain (Encadenamiento): either it
 // is the first record of the chain or it points at the previous record.
 type Chaining struct {
-	FirstRecord    string          `xml:"sum1:PrimerRegistro,omitempty"`         // "S" when first
+	FirstRecord    string          `xml:"sum1:PrimerRegistro,omitempty"` // "S" when first
 	PreviousRecord *PreviousRecord `xml:"sum1:RegistroAnterior,omitempty"`
 }
 
@@ -45,37 +45,37 @@ type PreviousRecord struct {
 
 // SoftwareSystem describes the producing billing system (SistemaInformatico).
 type SoftwareSystem struct {
-	Name                string `xml:"sum1:NombreRazon"`                  // producer
-	TaxID               string `xml:"sum1:NIF"`                          // producer
+	Name                string `xml:"sum1:NombreRazon"` // producer
+	TaxID               string `xml:"sum1:NIF"`         // producer
 	SystemName          string `xml:"sum1:NombreSistemaInformatico"`
-	SystemID            string `xml:"sum1:IdSistemaInformatico"`         // exactly 2 characters
+	SystemID            string `xml:"sum1:IdSistemaInformatico"` // exactly 2 characters
 	Version             string `xml:"sum1:Version"`
 	InstallationNumber  string `xml:"sum1:NumeroInstalacion"`
-	VerifactuOnlyUse    string `xml:"sum1:TipoUsoPosibleSoloVerifactu"`  // S/N
-	MultiTaxpayerUse    string `xml:"sum1:TipoUsoPosibleMultiOT"`        // S/N
-	MultipleOTIndicator string `xml:"sum1:IndicadorMultiplesOT"`         // S/N
+	VerifactuOnlyUse    string `xml:"sum1:TipoUsoPosibleSoloVerifactu"` // S/N
+	MultiTaxpayerUse    string `xml:"sum1:TipoUsoPosibleMultiOT"`       // S/N
+	MultipleOTIndicator string `xml:"sum1:IndicadorMultiplesOT"`        // S/N
 }
 
 // RegistrationRecord is one billing record of type alta (RegistroAlta).
 // Records are immutable once remitted; corrections are new records.
 type RegistrationRecord struct {
-	Version              string          `xml:"sum1:IDVersion"`                  // fixed "1.0"
+	Version              string          `xml:"sum1:IDVersion"` // fixed "1.0"
 	InvoiceID            InvoiceID       `xml:"sum1:IDFactura"`
 	IssuerName           string          `xml:"sum1:NombreRazonEmisor"`
-	Subsanacion          string          `xml:"sum1:Subsanacion,omitempty"`      // optional "S"
-	PreviousRejection    string          `xml:"sum1:RechazoPrevio,omitempty"`    // optional "S"/"X"
-	InvoiceType          string          `xml:"sum1:TipoFactura"`                // F1..R5
+	Subsanacion          string          `xml:"sum1:Subsanacion,omitempty"`   // optional "S"
+	PreviousRejection    string          `xml:"sum1:RechazoPrevio,omitempty"` // optional "S"/"X"
+	InvoiceType          string          `xml:"sum1:TipoFactura"`             // F1..R5
 	OperationDescription string          `xml:"sum1:DescripcionOperacion"`
 	Recipients           []Recipient     `xml:"sum1:Destinatarios>sum1:IDDestinatario,omitempty"`
 	Breakdown            []BreakdownLine `xml:"sum1:Desglose>sum1:DetalleDesglose,omitempty"` // 1..MaxBreakdownLines
-	TotalTax             string          `xml:"sum1:CuotaTotal"`                 // decimal
-	TotalAmount          string          `xml:"sum1:ImporteTotal"`               // decimal
-	SimplifiedInvoice    string          `xml:"sum1:FacturaSimplificada,omitempty"` // optional "S"
+	TotalTax             string          `xml:"sum1:CuotaTotal"`                              // decimal
+	TotalAmount          string          `xml:"sum1:ImporteTotal"`                            // decimal
+	SimplifiedInvoice    string          `xml:"sum1:FacturaSimplificada,omitempty"`           // optional "S"
 	Chaining             *Chaining       `xml:"sum1:Encadenamiento,omitempty"`
 	System               SoftwareSystem  `xml:"sum1:SistemaInformatico"`
-	GeneratedAt          string          `xml:"sum1:FechaHoraHusoGenRegistro"`   // ISO 8601 with offset
-	FingerprintType      string          `xml:"sum1:TipoHuella"`                 // fixed "01"
-	Fingerprint          string          `xml:"sum1:Huella"`                     // SHA-256, uppercase hex, 64 chars
+	GeneratedAt          string          `xml:"sum1:FechaHoraHusoGenRegistro"` // ISO 8601 with offset
+	FingerprintType      string          `xml:"sum1:TipoHuella"`               // fixed "01"
+	Fingerprint          string          `xml:"sum1:Huella"`                   // SHA-256, uppercase hex, 64 chars
 }
 
 func (RegistrationRecord) recordKind() {}

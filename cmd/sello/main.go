@@ -72,12 +72,12 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/certificado", guardarCertificado)
-	mux.HandleFunc("GET /v1/probar-conexion", probarConexion)
+	mux.HandleFunc("PUT /v1/certificado", guardarCertificado)
+	mux.HandleFunc("GET /v1/conexion-aeat", probarConexion)
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"status": "ok", "app": "facturable-sello", "modo": modo})
 	})
-	mux.HandleFunc("POST /v1/ingesta", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/registros", func(w http.ResponseWriter, r *http.Request) {
 		res, err := srv.IngestaCSV(r.Body)
 		if err != nil {
 			writeErr(w, err)
@@ -85,7 +85,7 @@ func main() {
 		}
 		writeJSON(w, res)
 	})
-	mux.HandleFunc("POST /v1/enviar", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST /v1/remisiones", func(w http.ResponseWriter, _ *http.Request) {
 		n, err := srv.EnviarPendientes(context.Background())
 		if err != nil {
 			writeErr(w, err)
@@ -126,25 +126,29 @@ func main() {
 		w.Header().Set("Content-Type", "application/pdf")
 		_, _ = w.Write(b)
 	})
-	mux.HandleFunc("GET /v1/export", func(w http.ResponseWriter, r *http.Request) {
+
+	// Colección de registros: representación por query (JSON por defecto,
+	// CSV para la gestoría con formato=csv + filtros por fecha).
+	mux.HandleFunc("GET /v1/registros", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		desde, hasta := q.Get("desde"), q.Get("hasta")
-		if desde == "" {
-			desde = "01-01-2020"
-		}
-		if hasta == "" {
-			hasta = time.Now().Format("02-01-2006")
-		}
-		b, _, err := srv.ExportarPeriodo(desde, hasta)
-		if err != nil {
-			writeErr(w, err)
+		if q.Get("formato") == "csv" {
+			desde, hasta := q.Get("desde"), q.Get("hasta")
+			if desde == "" {
+				desde = "01-01-2020"
+			}
+			if hasta == "" {
+				hasta = time.Now().Format("02-01-2006")
+			}
+			b, _, err := srv.ExportarPeriodo(desde, hasta)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+			w.Header().Set("Content-Disposition", "attachment; filename=libro-facturas.csv")
+			_, _ = w.Write(b)
 			return
 		}
-		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-		w.Header().Set("Content-Disposition", "attachment; filename=libro-facturas.csv")
-		_, _ = w.Write(b)
-	})
-	mux.HandleFunc("GET /v1/registros", func(w http.ResponseWriter, _ *http.Request) {
 		filas, err := store.Listado(nif, 0, 1_000_000_000, 1000)
 		if err != nil {
 			writeErr(w, err)
@@ -180,11 +184,32 @@ func construirRemisor() (application.Remisor, string) {
 // permite probar el circuito completo sin certificado ni red.
 type remisorSimulado struct{}
 
-func (remisorSimulado) Remitir(_ context.Context, _ string) (application.RespuestaLote, error) {
+func (remisorSimulado) Remitir(_ context.Context, soapXML string) (application.RespuestaLote, error) {
+	serie, fecha := serieYFechaDelXML(soapXML)
 	return application.RespuestaLote{
 		EstadoGlobal: "Correcto", CSV: "SIMULADO0000000A",
-		Lineas: []application.RespuestaLinea{{Estado: "Correcto"}},
+		Lineas: []application.RespuestaLinea{{
+			NIFEmisor: os.Getenv("SELLO_NIF"), NumSerie: serie, Fecha: fecha,
+			TipoOperacion: "Alta", Estado: "Correcto"}},
 	}, nil
+}
+
+// serieYFechaDelXML extrae la primera IDFactura del sobre (sólo simulación).
+func serieYFechaDelXML(xmlStr string) (serie, fecha string) {
+	extraer := func(ini, fin string) string {
+		i := strings.Index(xmlStr, ini)
+		if i < 0 {
+			return ""
+		}
+		v := xmlStr[i+len(ini):]
+		if j := strings.Index(v, fin); j >= 0 {
+			return v[:j]
+		}
+		return ""
+	}
+	serie = extraer("<sum1:NumSerieFactura>", "</sum1:NumSerieFactura>")
+	fecha = extraer("<sum1:FechaExpedicionFactura>", "</sum1:FechaExpedicionFactura>")
+	return serie, fecha
 }
 
 func env(k, def string) string {
