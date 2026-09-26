@@ -12,10 +12,16 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
+
+	"facturable/internal/sello/pdf"
+	"facturable/internal/verifactu/domain/qr"
 
 	"facturable/internal/sello"
 	"facturable/internal/sello/persistencia"
@@ -79,6 +85,57 @@ func main() {
 		}
 		writeJSON(w, map[string]int{"enviados": n})
 	})
+	mux.HandleFunc("GET /v1/registros/{id}/pdf", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			writeErr(w, fmt.Errorf("identificador de registro no válido"))
+			return
+		}
+		f, ok, err := store.PorID(id)
+		if err != nil || !ok {
+			writeErr(w, fmt.Errorf("no existe el registro %d", id))
+			return
+		}
+		urlQR, err := qr.VerificationURL(qr.Production, qr.Query{
+			NIF: f.NIF, InvoiceNumber: f.Serie, ExpeditionDate: f.Fecha, TotalAmount: f.Importe,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		b, err := pdf.Factura(pdf.DatosFactura{
+			EmpresaNombre: nombre, EmpresaNIF: nif,
+			Serie: f.Serie, Fecha: f.Fecha, Tipo: f.Tipo,
+			ClienteNIF: "", Descripcion: "Registro de facturación Veri*Factu",
+			Desgloses:  []pdf.DesgloseFactura{{Tipo: "", Base: importeMenosCuota(f.Importe, f.Cuota), Cuota: f.Cuota}},
+			CuotaTotal: f.Cuota, ImporteTotal: f.Importe,
+			EstadoAEAT: f.Estado, CSV: f.CSV, URLCotejo: urlQR,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write(b)
+	})
+	mux.HandleFunc("GET /v1/export", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		desde, hasta := q.Get("desde"), q.Get("hasta")
+		if desde == "" {
+			desde = "01-01-2020"
+		}
+		if hasta == "" {
+			hasta = time.Now().Format("02-01-2006")
+		}
+		b, _, err := srv.ExportarPeriodo(desde, hasta)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", "attachment; filename=libro-facturas.csv")
+		_, _ = w.Write(b)
+	})
 	mux.HandleFunc("GET /v1/registros", func(w http.ResponseWriter, _ *http.Request) {
 		filas, err := store.Listado(nif, 0, 1_000_000_000, 1000)
 		if err != nil {
@@ -140,6 +197,17 @@ func mustEnv(k string) string {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// importeMenosCuota resta céntimos a céntimos para mostrar la base.
+func importeMenosCuota(importe, cuota string) string {
+	restar := func(a, b string) string {
+		ai, _ := strconv.Atoi(strings.Replace(a, ".", "", 1))
+		bi, _ := strconv.Atoi(strings.Replace(b, ".", "", 1))
+		r := ai - bi
+		return fmt.Sprintf("%d.%02d", r/100, r%100)
+	}
+	return restar(importe, cuota)
 }
 
 func writeErr(w http.ResponseWriter, err error) {

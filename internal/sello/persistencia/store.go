@@ -182,6 +182,20 @@ ORDER BY r.id LIMIT ?;`, nif, limite)
 	return out, rows.Err()
 }
 
+// PorID devuelve la fila del libro de un registro concreto.
+func (s *Store) PorID(id int64) (FilaListado, bool, error) {
+	filas, err := s.Listado("", 0, 1_000_000_000, 1_000_000)
+	if err != nil {
+		return FilaListado{}, false, err
+	}
+	for _, f := range filas {
+		if f.ID == id {
+			return f, true, nil
+		}
+	}
+	return FilaListado{}, false, nil
+}
+
 // FilaListado es la vista del libro para la UI y la exportación.
 type FilaListado struct {
 	ID                      int64
@@ -204,8 +218,8 @@ SELECT r.id, r.nif, r.serie, r.fecha, r.tipo, r.cuota, r.importe, r.huella,
 FROM registros r
 LEFT JOIN remisiones e ON e.registro_id = r.id AND e.intento = (
   SELECT MAX(intento) FROM remisiones WHERE registro_id = r.id)
-WHERE r.nif = ? AND r.id BETWEEN ? AND ?
-ORDER BY r.id LIMIT ?;`, nif, desde, hasta, limite)
+WHERE (? = '' OR r.nif = ?) AND r.id BETWEEN ? AND ?
+ORDER BY r.id LIMIT ?;`, nif, nif, desde, hasta, limite)
 	if err != nil {
 		return nil, fmt.Errorf("no se pudo leer el libro: %w", err)
 	}
