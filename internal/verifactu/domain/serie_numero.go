@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// maxSerieNumeroLength is the AEAT limit for NumSerieFactura (Alfanumérico
-// (60), Anexo I del diseño de chainRow de alta).
+// maxSerieNumeroLength is the AEAT limit for NumSerieFactura (alphanumeric
+// 60, Annex I of the registration record design).
 const maxSerieNumeroLength = 60
 
 // SerieNumero is the invoice number (and optional series) assigned by the

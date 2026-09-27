@@ -7,18 +7,18 @@ import (
 	"facturable/internal/verifactu/domain"
 )
 
-// IntegrityReport resume la verificación de la cadena del libro.
+// IntegrityReport summarizes the ledger chain verification.
 type IntegrityReport struct {
 	Registros int
 	Rupturas  []string
 }
 
-// Healthy devuelve true cuando la cadena no tiene rupturas ni huellas inválidas.
+// Healthy reports true when the chain has no ruptures nor invalid fingerprints.
 func (i IntegrityReport) Healthy() bool { return len(i.Rupturas) == 0 }
 
-// VerifyChain recalcula la huella de CADA chainRow con los datos
-// almacenados y comprueba el encadenamiento completo (n→n-1): la
-// autocomprobación de integridad del SIF (RRSIF art. 8).
+// VerifyChain recomputes the fingerprint of EVERY chainRow from the stored
+// data and checks the full chaining (n to n-1): the SIF integrity
+// self-check (RRSIF art. 8).
 func (s *Service) VerifyChain() (*IntegrityReport, error) {
 	registros, err := s.Store.FullChain(s.EmisorNIF)
 	if err != nil {
@@ -100,7 +100,7 @@ func recomputeRegistration(emisor string, r persistence.ChainRecord, anterior st
 	})
 }
 
-// previousHuella admite la cadena vacía del primer chainRow.
+// previousHuella accepts the empty chain of the first chainRow.
 func previousHuella(anterior string) (domain.Huella, error) {
 	if anterior == "" {
 		return domain.Huella{}, nil

@@ -157,7 +157,7 @@ func ExtractFiscalFromText(text string) (nif, base, cuota, serie, fecha string, 
 				fecha = strings.ReplaceAll(m[1], "/", "-")
 			}
 		}
-		// Número/serie de factura
+		// invoice number/series
 		if serie == "" {
 			if m := regexp.MustCompile(`(?:FACTURA|Invoice|N[úu]mero)\s*:?\s*([A-Za-z0-9/-]+)`).FindStringSubmatch(l); m != nil {
 				serie = m[1]

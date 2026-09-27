@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -36,8 +37,8 @@ func newStore(db *sql.DB) (*store, error) {
 	return &store{db: db}, nil
 }
 
-// LoadOrCreateKey lee etc/licencias.ed25519 o crea el par (dev) y
-// guarda la privada (0600); devuelve la privada y la pública.
+// LoadOrCreateKey reads etc/licencias.ed25519 or creates the keypair (dev)
+// and stores the private key (0600); it returns private and public.
 func LoadOrCreateKey(ruta string) (ed25519.PrivateKey, ed25519.PublicKey, error) {
 	if raw, err := os.ReadFile(ruta); err == nil && len(raw) == ed25519.PrivateKeySize {
 		priv := ed25519.PrivateKey(raw)
@@ -77,8 +78,9 @@ func NewAPI(db *sql.DB, priv ed25519.PrivateKey) (*API, error) {
 func (a *API) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/licenses/{id}", a.put)
 	mux.HandleFunc("GET /v1/licenses/{id}", a.get)
-	// Recurso derivado sustantivo en vez de sufijo :check (el mux de Go no
-	// admite wildcards con sufijo, y "validity" es más resource-oriented).
+	// Derived noun resource instead of a :check suffix (the Go mux cannot
+	// carry suffixes after a wildcard, and "validity" is more
+	// resource-oriented).
 	mux.HandleFunc("GET /v1/licenses/{id}/validity", a.validity)
 }
 
@@ -102,7 +104,7 @@ func (a *API) put(w http.ResponseWriter, r *http.Request) {
 	}
 	body := fmt.Sprintf("%v|%v|%d|%d", req.Plan, req.NIFs, req.DiasValidez, req.GraceDays)
 
-	// idempotencia: misma petición → mismo token; distinta → conflicto
+	// idempotency: same request yields the same token; a different one conflicts
 	var tokenExistente, bodyExistente string
 	err := a.store.db.QueryRow(`SELECT token, body FROM licencias WHERE id=?;`, id).Scan(&tokenExistente, &bodyExistente)
 	switch {
@@ -116,7 +118,7 @@ func (a *API) put(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"license_id": id, "token": tokenExistente}})
 		return
 	case !errors.Is(err, sql.ErrNoRows):
-		problem(w, 500, err.Error(), r)
+		internalProblem(w, r, err)
 		return
 	}
 
@@ -135,7 +137,7 @@ func (a *API) put(w http.ResponseWriter, r *http.Request) {
 VALUES (?,?,?,?,?,?,?,?);`, id, string(req.Plan), marshalNIFs(req.NIFs),
 		lic.ExpiresAt.Format(time.RFC3339), lic.GraceDays, lic.IssuedAt.Format(time.RFC3339), token, body)
 	if err != nil {
-		problem(w, 500, err.Error(), r)
+		internalProblem(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -155,16 +157,16 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-// validity es el recurso derivado "validez de la licencia": sellar caduca con
-// gracia; abrir/exportar jamás se bloquea (Gate del paquete). Sustantivo, no
-// acción: el verbo HTTP (GET) ya es la acción.
+// validity is the derived "license validity" resource: stamping expires
+// with grace; open/export are never blocked (the package Gate). A noun, not
+// an action: the HTTP verb (GET) already is the action.
 func (a *API) validity(w http.ResponseWriter, r *http.Request) {
 	lic, _, ok := a.findByID(w, r)
 	if !ok {
 		return
 	}
 	res := map[string]any{
-		"open_data": true, "export": true, // nunca rehén
+		"open_data": true, "export": true, // never a hostage
 	}
 	if err := Gate(lic, a.ahora(), ActionStampNew); err != nil {
 		res["stamp_new"] = false
@@ -178,6 +180,13 @@ func (a *API) validity(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) findByID(w http.ResponseWriter, r *http.Request) (License, string, bool) {
 	id := r.PathValue("id")
+	// Strict UUID validation on EVERY path that carries an id (audit):
+	// GET /v1/licenses/{id} and GET /v1/licenses/{id}/validity must reject
+	// non-UUID ids exactly like PUT does.
+	if !isUUID(id) {
+		problem(w, 400, "invalid license id: a client-provided UUID is required", r)
+		return License{}, "", false
+	}
 	var plan, nifsJSON, token string
 	var expires, issued string
 	var grace int
@@ -188,7 +197,7 @@ func (a *API) findByID(w http.ResponseWriter, r *http.Request) (License, string,
 		return License{}, "", false
 	}
 	if err != nil {
-		problem(w, 500, err.Error(), r)
+		internalProblem(w, r, err)
 		return License{}, "", false
 	}
 	var nifs []string
@@ -228,6 +237,13 @@ func limitedBody(r *http.Request) bodyReader { return bodyReader{r} }
 type bodyReader struct{ r *http.Request }
 
 func (i bodyReader) Read(p []byte) (int, error) { return i.r.Body.Read(p) }
+
+// internalProblem answers a 500 with a generic detail: the storage cause is
+// logged server-side and its SQL text never reaches the client (audit).
+func internalProblem(w http.ResponseWriter, r *http.Request, cause error) {
+	log.Printf("licenses api: %v", cause)
+	problem(w, 500, "error interno; inténtalo de nuevo", r)
+}
 
 func problem(w http.ResponseWriter, status int, detail string, r *http.Request) {
 	w.Header().Set("Content-Type", "application/problem+json")

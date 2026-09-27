@@ -123,9 +123,17 @@ func HasText(pdfBytes []byte) bool {
 	return err == nil
 }
 
+// maxOCRBytes caps the document handed to tesseract (audit network/input
+// #2): 32 MB is far above any real invoice and bounds the temp-file write
+// and the OCR process memory.
+const maxOCRBytes = 32 << 20
+
 // OCRViaTesseract runs tesseract on the PDF/image as fallback for
 // scanned documents. Returns extracted text or error if tesseract missing.
 func OCRViaTesseract(pdfBytes []byte, lang string) (string, error) {
+	if len(pdfBytes) > maxOCRBytes {
+		return "", fmt.Errorf("el documento supera el límite de %d MB para OCR", maxOCRBytes>>20)
+	}
 	if lang == "" {
 		lang = "spa"
 	}

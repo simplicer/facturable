@@ -3,6 +3,8 @@ package licenses
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -253,5 +255,41 @@ func TestVerifyRejectsStructurallyInvalidLicense(t *testing.T) {
 
 	if _, err := Verify(pub, token); err == nil {
 		t.Fatal("Verify() = nil error, want error for invalid plan inside valid signature")
+	}
+}
+
+// TestSignedPayloadCarriesEveryProtectedField pins the audit check: every
+// manipulable license field must live INSIDE the signed payload — anything
+// left outside could be re-encoded or swapped without breaking the
+// signature.
+func TestSignedPayloadCarriesEveryProtectedField(t *testing.T) {
+	t.Parallel()
+
+	pub, priv := testKeys(t)
+	l := testLicense(t)
+	token, err := Sign(priv, l)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	parts := strings.Split(token, ".")
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("payload is not base64url: %v", err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatalf("payload is not a JSON object: %v", err)
+	}
+	for _, key := range []string{"license_id", "plan", "nifs", "expires_at", "grace_days", "issued_at"} {
+		if _, ok := fields[key]; !ok {
+			t.Errorf("signed payload lacks %q: that field could be manipulated outside the signature", key)
+		}
+	}
+	if got := fields["license_id"]; got != l.LicenseID {
+		t.Errorf("payload license_id = %v, want %q", got, l.LicenseID)
+	}
+	if _, err := Verify(pub, token); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }

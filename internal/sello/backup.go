@@ -15,11 +15,11 @@ import (
 // backupMagic heads every backup file.
 var backupMagic = []byte("FBK1")
 
-// CreateBackup cifra (AES-256-GCM, clave PBKDF2-SHA256 de la contraseña) una
-// copia de la base de datos del libro. La copia se toma de un fichero
-// físicamente distinto: SQLite en WAL puede estar a mitad de checkpoint, así
-// que el destino recomendado es la herramienta sqlite de backup (véase
-// Makefile); aquí ciframos lo que el llamador entrega.
+// CreateBackup encrypts (AES-256-GCM, PBKDF2-SHA256 key from the password)
+// a copy of the ledger database. The copy comes from a physically different
+// file: SQLite in WAL mode may be mid-checkpoint, so the recommended target
+// is the sqlite backup tool (see the Makefile); here we encrypt whatever the
+// caller hands over.
 func CreateBackup(rutaDB, rutaDestino, password string) error {
 	plain, err := os.ReadFile(rutaDB)
 	if err != nil {

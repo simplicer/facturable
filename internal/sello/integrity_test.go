@@ -2,12 +2,15 @@ package sello
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
 
 	"facturable/internal/sello/persistence"
 	"facturable/internal/verifactu/application"
+
+	_ "modernc.org/sqlite"
 )
 
 func newTestService(t *testing.T) (*Service, *fakeSubmitter, *relojFalso, string) {
@@ -119,4 +122,56 @@ func pendUUID(t *testing.T, srv *Service) string {
 	}
 	t.Fatal("sin anulación en el libro")
 	return ""
+}
+
+// VerifyChain must recompute the fingerprint of EVERY record, not only the
+// last one: a tampered fingerprint in the middle of the chain (what a disk
+// corruption or an attacker with file access would leave behind) must be
+// reported as a rupture naming the affected record.
+func TestVerifyChainDetectsTamperedMiddleFingerprint(t *testing.T) {
+	srv, _, _, dir := newTestService(t)
+	if _, err := srv.IngestCSV(strings.NewReader(csvPrueba)); err != nil {
+		t.Fatal(err)
+	}
+	tamperStoredFingerprint(t, dir+"/agente.sqlite", "B72877814", "F-2027-0001")
+
+	info, err := srv.VerifyChain()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Healthy() {
+		t.Fatalf("a tampered first-record fingerprint must break the chain (Registros=%d)", info.Registros)
+	}
+	joined := strings.Join(info.Rupturas, "\n")
+	if !strings.Contains(joined, "F-2027-0001") {
+		t.Errorf("rupturas = %v, want at least one naming the tampered record F-2027-0001", info.Rupturas)
+	}
+	if !strings.Contains(joined, "huella recalculada") {
+		t.Errorf("rupturas = %v, want the recomputed-vs-stored fingerprint mismatch report", info.Rupturas)
+	}
+}
+
+// tamperStoredFingerprint rewrites one stored fingerprint in place. The
+// RRSIF immutability triggers block UPDATE, so the test (exactly like a
+// real corruption) drops the update trigger for the tamper and restores it
+// right after, through a second connection to the same database file.
+func tamperStoredFingerprint(t *testing.T, path, nif, series string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`DROP TRIGGER registros_inmutables_update;`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE registros SET huella=? WHERE nif=? AND series=?;`,
+		strings.Repeat("F", 64), nif, series); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER registros_inmutables_update
+BEFORE UPDATE ON registros
+BEGIN SELECT RAISE(ABORT, 'los registros de facturación son inmutables'); END;`); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -6,7 +6,10 @@ package persistence
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,8 +17,23 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// ErrInternal marks a persistence-layer failure. Callers must detect it with
+// errors.Is and answer the client with a generic message: the driver detail
+// (SQL text, table names) never crosses the API boundary (audit #8).
+var ErrInternal = errors.New("error interno de persistencia")
+
+// checkpointEveryRecords is how often Append flushes the WAL into the main
+// database file: an automatic periodic checkpoint keeps the write-ahead log
+// bounded even for agents that stamp for months without a manual backup.
+const checkpointEveryRecords = 100
+
 // Store is the SIF local ledger.
-type Store struct{ db *sql.DB }
+type Store struct {
+	db *sql.DB
+	// inserts counts successful ledger appends since the last automatic
+	// checkpoint (atomic: several goroutines may stamp concurrently).
+	inserts atomic.Int64
+}
 
 // Open initializes (or reuses) the database at path.
 func Abrir(path string) (*Store, error) {
@@ -23,7 +41,7 @@ func Abrir(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("no se pudo abrir la base de datos: %w", err)
 	}
-	db.SetMaxOpenConns(1) // SQLite: una escritora evita SQLITE_BUSY
+	db.SetMaxOpenConns(1) // SQLite: a single writer avoids SQLITE_BUSY
 	s := &Store{db: db}
 	if err := s.migrar(); err != nil {
 		db.Close()
@@ -106,16 +124,41 @@ CREATE INDEX IF NOT EXISTS idx_registros_orden ON registros(nif, id);`); err != 
 	return nil
 }
 
-// StoredRecord es un chainRow listo para sellar en el libro.
+// StoredRecord is a chainRow ready to be stamped into the ledger.
 type StoredRecord struct {
 	UUID                                   string
 	NIF, Serie, Date, Tipo, Generado       string
 	Cuota, Importe, Huella, XML            string
-	EnlaceSerie, EnlaceFecha, EnlaceHuella string // vacíos si es el primero
-	ClientNIF                              string // destinatario, vacío si no consta
+	EnlaceSerie, EnlaceFecha, EnlaceHuella string // empty on the first record
+	ClientNIF                              string // recipient, empty when unknown
 }
 
-// Append añade un chainRow al libro (append-only).
+// diskFull reports whether a driver error means the host disk can no longer
+// accept writes (SQLITE_FULL "database or disk is full" and the SQLITE_IOERR
+// "disk I/O error" family). Without this check a full disk would surface as
+// a cryptic driver message instead of a clear instruction to the user.
+func diskFull(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "database or disk is full") ||
+		strings.Contains(msg, "disk I/O error")
+}
+
+// saveError classifies a failed ledger write for the user: a full disk
+// answers with the clear Spanish instruction, everything else keeps the
+// wrapped detail (already guarded against API leaks by the callers).
+func saveError(err error) error {
+	if diskFull(err) {
+		return fmt.Errorf("el disco está lleno, no se puede guardar la factura")
+	}
+	return fmt.Errorf("no se pudo guardar el registro: %w", err)
+}
+
+// Append adds a chainRow to the ledger (append-only). Every 100 inserts it
+// checkpoints the WAL automatically so the ledger stays safe against abrupt
+// shutdowns and the WAL file stays bounded.
 func (s *Store) Append(r StoredRecord) (int64, error) {
 	if r.UUID == "" {
 		r.UUID = uuid.NewString()
@@ -127,13 +170,18 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
 		nullIfEmpty(r.EnlaceSerie), nullIfEmpty(r.EnlaceFecha), nullIfEmpty(r.EnlaceHuella),
 		r.XML, time.Now().UTC().Format(time.RFC3339), nullIfEmpty(r.ClientNIF))
 	if err != nil {
-		return 0, fmt.Errorf("no se pudo storeRow el chainRow: %w", err)
+		return 0, saveError(err)
+	}
+	// best-effort periodic checkpoint: the record is already durably in the
+	// WAL, a failed checkpoint must not fail the stamping
+	if s.inserts.Add(1)%checkpointEveryRecords == 0 {
+		_ = s.Checkpoint()
 	}
 	return res.LastInsertId()
 }
 
-// Last devuelve identidad y enlace del último chainRow de un obligado.
-// ok=false cuando la cadena aún no tiene registros.
+// Last returns the identity and backlink of a taxpayer's last chainRow.
+// ok=false when the chain has no records yet.
 func (s *Store) Last(nif string) (series, fecha, huella, enlSerie, enlFecha, enlHuella string, ok bool, err error) {
 	row := s.db.QueryRow(`SELECT series, fecha, huella, enlace_serie, enlace_fecha, enlace_huella
 FROM registros WHERE nif=? ORDER BY id DESC LIMIT 1;`, nif)
@@ -147,9 +195,9 @@ FROM registros WHERE nif=? ORDER BY id DESC LIMIT 1;`, nif)
 	return series, fecha, huella, es.String, ef.String, eh.String, true, nil
 }
 
-// Previous devuelve series/fecha/huella del penúltimo chainRow (n-2) de un
-// obligado; ok=false cuando la cadena tiene un solo chainRow o ninguno.
-// Es la pieza que alimenta domain.VerificarSalto antes de sellar.
+// Previous returns the series/date/fingerprint of the second-to-last
+// chainRow (n-2) of a taxpayer; ok=false when the chain has one record or
+// none. It feeds domain.VerificarSalto before stamping.
 func (s *Store) Previous(nif string) (series, fecha, huella string, ok bool, err error) {
 	row := s.db.QueryRow(`SELECT series, fecha, huella
 FROM registros WHERE nif=? ORDER BY id DESC LIMIT 1 OFFSET 1;`, nif)
@@ -162,14 +210,14 @@ FROM registros WHERE nif=? ORDER BY id DESC LIMIT 1 OFFSET 1;`, nif)
 	return series, fecha, huella, true, nil
 }
 
-// Submission
+// Submission log entry.
 type StoredSubmission struct {
 	RegistroID           int64
 	Estado               string // correcto|aceptado_errores|rechazado
 	CSV, Codigo, Detalle string
 }
 
-// RecordSubmission añade un intento al log.
+// RecordSubmission appends one attempt to the submission log.
 func (s *Store) RecordSubmission(r StoredSubmission) error {
 	var intento int
 	if err := s.db.QueryRow(`SELECT COALESCE(MAX(intento),0)+1 FROM remisiones WHERE registro_id=?;`, r.RegistroID).Scan(&intento); err != nil {
@@ -178,10 +226,13 @@ func (s *Store) RecordSubmission(r StoredSubmission) error {
 	_, err := s.db.Exec(`INSERT INTO remisiones (registro_id, intento, estado, csv, codigo, detalle, fecha) VALUES (?,?,?,?,?,?,?);`,
 		r.RegistroID, intento, r.Estado, nullIfEmpty(r.CSV), nullIfEmpty(r.Codigo), nullIfEmpty(r.Detalle),
 		time.Now().UTC().Format(time.RFC3339))
-	return err
+	if err != nil {
+		return saveError(err)
+	}
+	return nil
 }
 
-// PendingRecord es un chainRow esperando remisión.
+// PendingRecord is a chainRow waiting for submission.
 type PendingRecord struct {
 	ID    int64
 	Serie string
@@ -189,10 +240,12 @@ type PendingRecord struct {
 	XML   string
 }
 
-// Pending devuelve los registros aún sin remitir (sin intento válido).
-// Los rechazos no reintentables requieren subsanación manual: no se
-// reenvían solos.
+// Pending returns the records still awaiting their first valid submission.
+// Non-retryable rejections require manual correction: they are never
+// re-sent on their own.
 // HasSeries reports whether a record with that series already exists for
+// the taxpayer (relay/API idempotency: repeated webhooks must not stamp
+// twice).
 // the taxpayer (relay/API idempotency: repeated webhooks must not stamp
 // twice).
 func (s *Store) HasSeries(nif, series string) (bool, error) {
@@ -262,7 +315,7 @@ func (s *Store) XMLByUUID(recordUUID string) (string, bool, error) {
 	return xmlStr, true, nil
 }
 
-// ChainRecord es todo lo necesario para verificar la cadena completa.
+// ChainRecord holds everything needed to verify the full chain.
 type ChainRecord struct {
 	ID                                     int64
 	Serie, Date, Tipo, Generado            string
@@ -270,7 +323,7 @@ type ChainRecord struct {
 	EnlaceSerie, EnlaceFecha, EnlaceHuella string
 }
 
-// FullChain devuelve los registros de un obligado en orderSeen de sellado.
+// FullChain returns a taxpayer's records in stamping order.
 func (s *Store) FullChain(nif string) ([]ChainRecord, error) {
 	rows, err := s.db.Query(`
 SELECT id, series, fecha, tipo, generado, cuota, importe, huella,
@@ -292,7 +345,7 @@ FROM registros WHERE nif=? ORDER BY id;`, nif)
 	return out, rows.Err()
 }
 
-// LedgerRow es la vista del libro para la UI y la exportación.
+// LedgerRow is the ledger view for the UI and the export.
 type LedgerRow struct {
 	UUID                   string `json:"uuid"`
 	ID                     int64  `json:"-"`
@@ -303,7 +356,7 @@ type LedgerRow struct {
 	Remitido               string
 }
 
-// Ledger devuelve el libro ordenado por inserción con el último estado.
+// Ledger returns the ledger ordered by insertion with the latest state.
 func (s *Store) Ledger(nif string, desde, hasta int64, limite int) ([]LedgerRow, error) {
 	rows, err := s.db.Query(`
 SELECT r.uuid, r.id, r.nif, r.series, r.fecha, r.tipo, r.cuota, r.importe, r.huella,
@@ -332,6 +385,43 @@ ORDER BY r.id LIMIT ?;`, nif, nif, desde, hasta, limite)
 	return out, rows.Err()
 }
 
+// LedgerPage returns one page of the ledger (oldest first) together with the
+// total number of ledger rows in the range, so the API can answer the
+// pagination meta (page, page_size, total) without a second round trip.
+// offset counts rows, not pages: offset = (page-1)*page_size.
+func (s *Store) LedgerPage(nif string, desde, hasta int64, limit, offset int) ([]LedgerRow, int, error) {
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM registros WHERE (? = '' OR nif = ?) AND id BETWEEN ? AND ?;`,
+		nif, nif, desde, hasta).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("no se pudo contar el libro: %w", err)
+	}
+	rows, err := s.db.Query(`
+SELECT r.uuid, r.id, r.nif, r.series, r.fecha, r.tipo, r.cuota, r.importe, r.huella,
+       COALESCE(e.estado,'pendiente'),
+       COALESCE(e.csv, (SELECT csv FROM remisiones
+                         WHERE registro_id = r.id AND csv IS NOT NULL
+                         ORDER BY intento DESC LIMIT 1), ''),
+       COALESCE(e.fecha,'')
+FROM registros r
+LEFT JOIN remisiones e ON e.registro_id = r.id AND e.intento = (
+  SELECT MAX(intento) FROM remisiones WHERE registro_id = r.id)
+WHERE (? = '' OR r.nif = ?) AND r.id BETWEEN ? AND ?
+ORDER BY r.id LIMIT ? OFFSET ?;`, nif, nif, desde, hasta, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("no se pudo leer el libro: %w", err)
+	}
+	defer rows.Close()
+	out := []LedgerRow{}
+	for rows.Next() {
+		var f LedgerRow
+		if err := rows.Scan(&f.UUID, &f.ID, &f.NIF, &f.Serie, &f.Date, &f.Tipo, &f.Cuota, &f.Importe, &f.Huella, &f.Estado, &f.CSV, &f.Remitido); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, f)
+	}
+	return out, total, rows.Err()
+}
+
 // CountRecent returns how many records of a taxpayer were stamped since the
 // given instant (creado_en is RFC3339 UTC, so lexicographic comparison is
 // exact). It feeds the opt-in anonymous telemetry: only the integer count
@@ -353,13 +443,14 @@ func nullIfEmpty(v string) any {
 	return v
 }
 
-// IngestBatch es el resultado persistido de una ingesta idempotente.
+// IngestBatch is the persisted result of an idempotent ingestion.
 type IngestBatch struct {
 	UUID, BodyHash, Response string
 }
 
-// SaveIngestBatch guarda (o ignora) el resultado de un lote; devuelve el
-// resultado previo si el UUID ya existía con otro cuerpo (conflicto).
+// SaveIngestBatch stores (or ignores) the result of a batch; it returns the
+// previous result when the UUID already existed with a different body
+// (conflict).
 func (s *Store) SaveIngestBatch(b IngestBatch) (prev *IngestBatch, fresh bool, err error) {
 	var hash, resp string
 	err = s.db.QueryRow(`SELECT body_hash, response FROM ingest_batches WHERE uuid=?;`, b.UUID).Scan(&hash, &resp)
@@ -374,10 +465,13 @@ func (s *Store) SaveIngestBatch(b IngestBatch) (prev *IngestBatch, fresh bool, e
 	}
 	_, err = s.db.Exec(`INSERT INTO ingest_batches (uuid, body_hash, response, created_at) VALUES (?,?,?,?);`,
 		b.UUID, b.BodyHash, b.Response, time.Now().UTC().Format(time.RFC3339))
-	return nil, err == nil, err
+	if err != nil {
+		return nil, false, saveError(err)
+	}
+	return nil, true, nil
 }
 
-// GetIngestBatch devuelve el lote previo con ese UUID.
+// GetIngestBatch returns the previous batch with that UUID.
 func (s *Store) GetIngestBatch(uuid string) (IngestBatch, bool, error) {
 	var b IngestBatch
 	err := s.db.QueryRow(`SELECT uuid, body_hash, response FROM ingest_batches WHERE uuid=?;`, uuid).

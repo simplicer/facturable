@@ -10,8 +10,8 @@ import (
 	"facturable/internal/verifactu/domain/xmlalta"
 )
 
-// SystemInfo identifica el SIF en cada chainRow (art. 15 OM: productor,
-// IdSistemaInformatico de 2 caracteres, versión e instalación).
+// SystemInfo identifies the SIF inside every chainRow (art. 15 OM: producer,
+// 2-character IdSistemaInformatico, version and installation).
 type SystemInfo struct {
 	NombreProductor, NIFProductor string
 	NombreSistema, IDSistema      string // IDSistema: exactamente 2 caracteres
@@ -33,18 +33,19 @@ type InvoiceDraft struct {
 // RectificadaRef identifies an already-issued invoice being rectified.
 type RectificadaRef struct{ Series, Date string }
 
-// BreakdownDraft es una línea de IVA del borrador.
+// BreakdownDraft is one VAT line of the draft.
 type BreakdownDraft struct {
 	TaxRate, Base, Cuota string
 }
 
-// ChainState es la foto del libro que el llamador saca del almacén:
-//   - Last: identidad (series/fecha/huella) del último chainRow, n-1.
-//   - DeclaradoPorUltimo: el enlace que n-1 incrustó hacia n-2 (nil si n-1
-//     fue el primero). Es lo que permite detectar manipulaciones.
-//   - Previous: identidad real de n-2 según el almacén (nil si no existe).
+// ChainState is the snapshot of the ledger the caller takes from the store:
+//   - Last: identity (series/date/fingerprint) of the last chainRow, n-1.
+//   - DeclaradoPorUltimo: the backlink n-1 embedded toward n-2 (nil when n-1
+//     was the first record). It is what makes tampering detectable.
+//   - Previous: the real identity of n-2 according to the store (nil when
+//     absent).
 //
-// Last nil = cadena vacía.
+// Last nil = empty chain.
 type ChainState struct {
 	Last               *ChainLink
 	DeclaradoPorUltimo *ChainLink
@@ -56,17 +57,17 @@ type ChainLink struct{ Serie, Date, Huella string }
 
 // SealResult es todo lo que hay que persistir tras sellar.
 type SealResult struct {
-	XML string // sobre SOAP completo del chainRow (envío unitario)
+	XML string // complete SOAP envelope of the chainRow (single submission)
 
 	NIF, Serie, Date, Tipo                 string
 	Cuota, Importe, Generado, Huella       string
-	EnlaceSerie, EnlaceFecha, EnlaceHuella string // vacíos si es el primero
+	EnlaceSerie, EnlaceFecha, EnlaceHuella string // empty on the first record
 	EsPrimero                              bool
 }
 
-// SealInvoice convierte un borrador en chainRow de facturación encadenado
-// con su XML de remisión. Verifica el salto n-1/n-2 antes de sellar
-// (FAQ AEAT de trazabilidad) y calcula totales por suma exacta en céntimos.
+// SealInvoice turns a draft into a chained billing chainRow with its
+// submission XML. It verifies the n-1/n-2 chain jump before stamping
+// (AEAT traceability FAQ) and computes totals by exact cent addition.
 func SealInvoice(emisorNIF, emisorNombre string, b InvoiceDraft, sis SystemInfo, cadena ChainState, ahora time.Time) (*SealResult, error) {
 	nif, err := domain.NewNIF(emisorNIF)
 	if err != nil {
@@ -85,7 +86,7 @@ func SealInvoice(emisorNIF, emisorNombre string, b InvoiceDraft, sis SystemInfo,
 		return nil, fmt.Errorf("tipo de factura: %v", err)
 	}
 
-	// Totales exactos en céntimos (sin float).
+	// Exact totals in cents (no floats).
 	cuotaCent, baseCent := 0, 0
 	lineas := make([]xmlalta.BreakdownLine, 0, len(b.Desgloses))
 	for _, d := range b.Desgloses {
@@ -101,7 +102,7 @@ func SealInvoice(emisorNIF, emisorNombre string, b InvoiceDraft, sis SystemInfo,
 		cuotaCent += cuota
 		lineas = append(lineas, xmlalta.BreakdownLine{
 			Tax:                    "01", // IVA
-			RegimeKey:              "01", // régimen general
+			RegimeKey:              "01", // general regime
 			OperationQualification: "S1", // sujeta y no exenta
 			TaxRate:                normalizeDecimal(d.TaxRate),
 			TaxBase:                fromCents(base),
@@ -115,7 +116,7 @@ func SealInvoice(emisorNIF, emisorNombre string, b InvoiceDraft, sis SystemInfo,
 		return nil, fmt.Errorf("la factura %s supera los 12 desgloses admitidos por la AEAT", b.Series)
 	}
 
-	// Verificación del salto de cadena antes de generar la huella.
+	// Chain jump verification before computing the fingerprint.
 	var previousHuella domain.Huella
 	var encadenamiento xmlalta.Chaining
 	switch {
@@ -260,7 +261,6 @@ func mustTotal(raw string) domain.ImporteTotal {
 	return v
 }
 
-// toCents parsea "123.45" (2 decimales, punto o coma) a céntimos exactos.
 // ToCents parses "123.45" (2 decimals, dot or comma) into exact cents.
 func ToCents(raw string) (int, error) { return toCents(raw) }
 

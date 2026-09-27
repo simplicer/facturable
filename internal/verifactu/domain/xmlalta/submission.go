@@ -1,6 +1,7 @@
 // Package xmlalta serializes Veri*Factu billing-record submissions
 // (RegFactuSistemaFacturacion) to the exact SOAP XML contract of the AEAT
-// "Sistemas Informáticos de Facturación" web services specification v1.0.3.
+// billing-system (Sistemas Informaticos de Facturacion) web services
+// specification v1.0.3.
 //
 // The package is pure domain code: no I/O, no clock, no environment access.
 // Serialization (XML) and business validation (Validate) are separate

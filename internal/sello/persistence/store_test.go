@@ -1,6 +1,9 @@
 package persistence
 
 import (
+	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -159,5 +162,110 @@ BEGIN SELECT RAISE(ABORT, 'los registros de facturación son inmutables'); END;`
 	}
 	if n != 2 {
 		t.Fatalf("CountRecent = %d, want 2 (the 60-day-old row and the other taxpayer's row stay out)", n)
+	}
+}
+
+// diskFull classifies driver write failures: SQLITE_FULL and the
+// SQLITE_IOERR family must be recognizable so Append can answer the user
+// with a clear disk-full message instead of raw driver text.
+func TestDiskFullClassification(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil error is not disk full", err: nil, want: false},
+		{name: "sqlite full maps to disk full", err: errors.New("database or disk is full (13)"), want: true},
+		{name: "disk I/O error maps to disk full", err: errors.New("disk I/O error (10)"), want: true},
+		{name: "wrapped disk I/O error maps to disk full", err: fmt.Errorf("no se pudo guardar el registro: %w", errors.New("disk I/O error")), want: true},
+		{name: "unique violation is not disk full", err: errors.New("UNIQUE constraint failed: registros.huella (2067)"), want: false},
+		{name: "busy is not disk full", err: errors.New("database is locked (5) (SQLITE_BUSY)"), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := diskFull(tt.err); got != tt.want {
+				t.Errorf("diskFull(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// A failing disk must produce the clear Spanish message, never driver text.
+func TestAppendDiskFullMessage(t *testing.T) {
+	err := saveError(errors.New("disk I/O error (10)"))
+	if err == nil || err.Error() != "el disco está lleno, no se puede guardar la factura" {
+		t.Fatalf("saveError(disk I/O error) = %v, want the clear disk-full message", err)
+	}
+	other := saveError(errors.New("UNIQUE constraint failed: registros.huella (2067)"))
+	if other == nil || strings.Contains(other.Error(), "UNIQUE") == false {
+		t.Fatalf("saveError(other) = %v, want the wrapped detail preserved", other)
+	}
+}
+
+// Append must checkpoint the WAL automatically every 100 records so the
+// write-ahead log never grows unbounded on long-lived agents.
+func TestAppendAutoCheckpointEvery100Records(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/test.sqlite"
+	s, err := Abrir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	if _, err := s.Append(chainRow(1, strings.Repeat("A", 64), "")); err != nil {
+		t.Fatal(err)
+	}
+	// after the first append the WAL holds data (no checkpoint yet)
+	if fi, err := os.Stat(path + "-wal"); err == nil && fi.Size() == 0 {
+		t.Fatal("WAL is empty before reaching the checkpoint threshold: the test cannot observe the auto-checkpoint")
+	}
+	for i := 2; i <= 100; i++ {
+		row := chainRow(i%10, strings.Repeat("H", 60)+fmt.Sprintf("%04d", i), strings.Repeat("B", 64))
+		if _, err := s.Append(row); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+	// crossing the 100-insert threshold must have truncated the WAL
+	fi, err := os.Stat(path + "-wal")
+	if err != nil {
+		if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		return // no WAL file means nothing left to flush: checkpointed
+	}
+	if fi.Size() != 0 {
+		t.Fatalf("WAL size after 100 inserts = %d bytes, want 0 (TRUNCATE checkpoint)", fi.Size())
+	}
+}
+
+// LedgerPage returns one page of rows plus the total in the range, feeding
+// the {page, page_size, total} meta of GET /v1/records.
+func TestLedgerPage(t *testing.T) {
+	s := newTestStore(t)
+	const total = 5
+	for i := 1; i <= total; i++ {
+		if _, err := s.Append(chainRow(i, strings.Repeat(string(rune('A'+i)), 64), "")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, n, err := s.LedgerPage("B72877814", 0, 1_000_000, 2, 0)
+	if err != nil || n != total {
+		t.Fatalf("page 1: rows=%d total=%d err=%v, want total=%d err=nil", len(rows), n, err, total)
+	}
+	if len(rows) != 2 || rows[0].Serie != "F-2027-0001" || rows[1].Serie != "F-2027-0002" {
+		t.Fatalf("page 1 rows = %+v", rows)
+	}
+	rows, n, err = s.LedgerPage("B72877814", 0, 1_000_000, 2, 4)
+	if err != nil || n != total {
+		t.Fatalf("last page: total=%d err=%v", n, err)
+	}
+	if len(rows) != 1 || rows[0].Serie != "F-2027-0005" {
+		t.Fatalf("last page rows = %+v", rows)
+	}
+	// offset beyond the end: empty page, total intact
+	rows, n, err = s.LedgerPage("B72877814", 0, 1_000_000, 2, 40)
+	if err != nil || n != total || len(rows) != 0 {
+		t.Fatalf("empty page: rows=%d total=%d err=%v", len(rows), n, err)
 	}
 }

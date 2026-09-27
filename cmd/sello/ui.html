@@ -145,7 +145,8 @@ function showCertStep(){
 async function refreshCertState(){
 	try{
 		const res=await fetch('/v1/connectivity');
-		const j=await res.json().catch(()=>({}));
+		const body=await res.json().catch(()=>({}));
+		const j=body.data||{};
 		if(res.ok&&j.certificado==='ok'){
 			certInstalled.style.display='block';certWizard.style.display='none';
 			certContinue.textContent='Continuar';
@@ -154,7 +155,7 @@ async function refreshCertState(){
 		}
 		certInstalled.style.display='none';certWizard.style.display='block';
 		certContinue.textContent='Continuar sin certificado (podrás instalarlo después)';
-		if(!res.ok&&j.detail)show('err','✗ '+j.detail);
+		if(!res.ok&&body.detail)show('err','✗ '+body.detail);
 	}catch(e){/* diagnóstico no disponible: dejamos la ruta de instalación */}
 }
 function paintConn(box,j){
@@ -168,9 +169,9 @@ async function checkConnection(box){
 	box.style.display='block';box.className='result';box.textContent='Comprobando conexión con Hacienda…';
 	try{
 		const res=await fetch('/v1/connectivity');
-		const j=await res.json().catch(()=>({}));
-		if(!res.ok&&j.detail){box.className='result err';box.textContent='✗ '+j.detail;return}
-		paintConn(box,j);
+		const body=await res.json().catch(()=>({}));
+		if(!res.ok&&body.detail){box.className='result err';box.textContent='✗ '+body.detail;return}
+		paintConn(box,body.data||{});
 	}catch(e){box.className='result err';box.textContent='✗ No se pudo comprobar la conexión: '+e.message}
 }
 document.getElementById('testConnBtn').onclick=async()=>{
@@ -193,7 +194,7 @@ document.getElementById('installCertBtn').onclick=async()=>{
 		certContinue.textContent='Continuar';
 		show('ok','✓ Certificado instalado');
 		await checkConnection(connResult); // diagnóstico automático tras instalar
-		if(j.nota)connResult.textContent+=' '+j.nota;
+		if(j.data&&j.data.nota)connResult.textContent+=' '+j.data.nota;
 	}catch(err){show('err','✗ '+err.message)}
 	btn.disabled=false;btn.textContent='Instalar certificado';
 };
@@ -219,8 +220,9 @@ async function loadFile(f){
 	try{
 		const fd=new FormData();fd.append('invoice',f);
 		const res=await fetch('/v1/extract',{method:'POST',body:fd});
-		const j=await res.json();
-		if(!res.ok)throw new Error(j.detail||'fallo');
+		const body=await res.json().catch(()=>({}));
+		const j=body.data||{};
+		if(!res.ok)throw new Error(body.detail||'fallo');
 		if(j.campos){
 			if(j.campos.nif)nif.value=j.campos.nif;
 			if(j.campos.base)base.value=j.campos.base;
@@ -260,7 +262,7 @@ function show(cls,msg){r.className='result '+cls;r.textContent=msg;r.style.displ
 const telemetryToggle=document.getElementById('telemetryToggle'),telemetryNote=document.getElementById('telemetryNote');
 (async()=>{
 	try{
-		const s=await(await fetch('/v1/telemetry/status')).json();
+		const s=(await(await fetch('/v1/telemetry/status')).json().catch(()=>({}))).data||{};
 		telemetryToggle.checked=!!s.optin;
 	}catch(e){/* status unavailable: leave the toggle unchecked (opt-out) */}
 })();

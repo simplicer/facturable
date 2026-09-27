@@ -1,8 +1,8 @@
-// Package qrcode implementa un codificador QR propio (modo byte, nivel M,
-// versiones 1-10) para estampar la URL de cotejo de la AEAT en las facturas.
-// Sin dependencias externas: GF(256), Reed-Solomon, entrelazado, máscaras y
-// penalización según ISO/IEC 18004, verificado contra generadores de
-// referencia (véase qrcode_test.go).
+// Package qrcode implements an in-house QR encoder (byte mode, level M,
+// versions 1-10) to stamp the AEAT verification URL onto invoices.
+// No external dependencies: GF(256), Reed-Solomon, interleaving, masks and
+// penalty per ISO/IEC 18004, verified against reference generators
+// (see qrcode_test.go).
 package qrcode
 
 import "fmt"
@@ -18,7 +18,7 @@ type blockSpec struct {
 	g2Data         int
 }
 
-// specByVersion[n] describe la versión n a nivel M.
+// specByVersion[n] describes version n at level M.
 var specByVersion = map[int]blockSpec{
 	1:  {26, 10, 1, 16, 0, 0},
 	2:  {44, 16, 1, 28, 0, 0},
@@ -32,7 +32,7 @@ var specByVersion = map[int]blockSpec{
 	10: {346, 26, 4, 43, 1, 44},
 }
 
-// alignmentCenters por versión (2..10); la versión 1 no lleva.
+// alignmentCenters per version (2..10); version 1 has none.
 var alignmentCenters = map[int][]int{
 	2: {6, 18}, 3: {6, 22}, 4: {6, 26}, 5: {6, 30}, 6: {6, 34},
 	7: {6, 22, 38}, 8: {6, 24, 42}, 9: {6, 26, 46}, 10: {6, 28, 50},
@@ -73,8 +73,8 @@ func gfMul(a, b byte) byte {
 	return gfExp[int(gfLog[a])+int(gfLog[b])]
 }
 
-// rsGenerator devuelve el polinomio generador de grado n (coeficientes,
-// término de mayor grado primero).
+// rsGenerator returns the generator polynomial of degree n (coefficients,
+// highest degree term first).
 func rsGenerator(n int) []byte {
 	gen := []byte{1}
 	for i := 0; i < n; i++ {
@@ -88,7 +88,7 @@ func rsGenerator(n int) []byte {
 	return gen
 }
 
-// rsEncode calcula los n símbolos de corrección de un bloque de datos.
+// rsEncode computes the n error-correction symbols of a data block.
 func rsEncode(data []byte, n int) []byte {
 	gen := rsGenerator(n)
 	rem := make([]byte, n)
@@ -105,11 +105,11 @@ func rsEncode(data []byte, n int) []byte {
 	return rem
 }
 
-// ---- construcción de codewords ----
+// ---- codeword assembly ----
 
-// Codewords produce la secuencia completa (datos + EC entrelazados) para
-// data en modo byte y nivel M, eligiendo la menor versión 1..10 que la
-// contenga.
+// Codewords produces the full sequence (interleaved data + EC) for data
+// in byte mode and level M, choosing the smallest version 1..10 that
+// fits it.
 func Codewords(data []byte) (version int, cw []byte, err error) {
 	spec, version, err := chooseVersion(len(data))
 	if err != nil {

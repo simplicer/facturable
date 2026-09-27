@@ -118,3 +118,27 @@ func TestLicencias404YValidacion(t *testing.T) {
 		t.Fatalf("dias_validez 0 = %d, want 422", r.StatusCode)
 	}
 }
+
+// TestLicenciasUUIDObligatorioEnTodasLasRutas pins the audit fix: every
+// path carrying a license id (PUT, GET and GET .../validity) must reject
+// non-UUID ids with 400; only a well-formed unknown UUID answers 404.
+func TestLicenciasUUIDObligatorioEnTodasLasRutas(t *testing.T) {
+	_, srv := nuevoAPIPrueba(t, time.Now)
+
+	if r := put(t, srv, "no-uuid", `{"plan":"pro","dias_validez":30}`); r.StatusCode != 400 {
+		t.Fatalf("PUT id no UUID = %d, want 400", r.StatusCode)
+	}
+	if r := put(t, srv, "11111111-1111-1111-1111-11111111111G", `{"plan":"pro","dias_validez":30}`); r.StatusCode != 400 {
+		t.Fatalf("PUT id con hex inválido = %d, want 400", r.StatusCode)
+	}
+	if r, _ := srv.Client().Get(srv.URL + "/v1/licenses/no-uuid"); r.StatusCode != 400 {
+		t.Fatalf("GET id no UUID = %d, want 400", r.StatusCode)
+	}
+	if r, _ := srv.Client().Get(srv.URL + "/v1/licenses/no-uuid/validity"); r.StatusCode != 400 {
+		t.Fatalf("GET validity id no UUID = %d, want 400", r.StatusCode)
+	}
+	// a valid but unknown UUID keeps answering 404 (not found), never 400
+	if r, _ := srv.Client().Get(srv.URL + "/v1/licenses/44444444-4444-4444-4444-444444444444/validity"); r.StatusCode != 404 {
+		t.Fatalf("GET validity uuid inexistente = %d, want 404", r.StatusCode)
+	}
+}

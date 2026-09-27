@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"facturable/internal/sello/ingest"
+	"facturable/internal/sello/persistence"
 	"facturable/internal/verifactu/application"
 )
 
@@ -33,12 +34,13 @@ func (s *Service) DuplicateInvoice(recordUUID string) (*DuplicateResult, error) 
 	}
 	raw, ok, err := s.Store.XMLByUUID(recordUUID)
 	if err != nil {
-		return nil, err
+		// persistence detail stays server-side (audit #8)
+		return nil, fmt.Errorf("%w: %v", persistence.ErrInternal, err)
 	}
 	if !ok {
 		return nil, ErrRecordNotFound
 	}
-	draft, err := quickInvoiceFromXML(raw).ToDraft(s.lastSeries(), s.clock())
+	draft, err := QuickInvoiceFromXML(raw).ToDraft(s.lastSeries(), s.clock())
 	if err != nil {
 		return nil, err
 	}
@@ -57,10 +59,11 @@ func (s *Service) DuplicateInvoice(recordUUID string) (*DuplicateResult, error) 
 	}, nil
 }
 
-// quickInvoiceFromXML rebuilds the 5-field quick form from a stored
+// QuickInvoiceFromXML rebuilds the 5-field quick form from a stored
 // submission XML. Quick-form invoices carry exactly one VAT breakdown;
-// multi-breakdown records duplicate their first one.
-func quickInvoiceFromXML(raw string) QuickInvoice {
+// multi-breakdown records take their first one. Exported because the API
+// layer needs it to decide PUT /v1/invoices/{uuid} replay vs conflict.
+func QuickInvoiceFromXML(raw string) QuickInvoice {
 	client := xmlSegment(raw, "sum1:IDDestinatario")
 	breakdown := xmlSegment(raw, "sum1:DetalleDesglose")
 	return QuickInvoice{

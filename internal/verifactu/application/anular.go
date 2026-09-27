@@ -8,9 +8,9 @@ import (
 	"facturable/internal/verifactu/domain/xmlalta"
 )
 
-// SealCancellation genera el chainRow de anulación de una factura emitida y
-// lo encadena como cualquier otro chainRow (FAQ AEAT: altas y anulaciones
-// comparten la MISMA cadena, en orderSeen de generación).
+// SealCancellation generates the cancellation chainRow of an issued invoice
+// and chains it like any other chainRow (AEAT FAQ: registrations and
+// cancellations share the SAME chain, in generation order).
 func SealCancellation(emisorNIF, emisorNombre string, series, fecha string, sis SystemInfo, cadena ChainState, ahora time.Time) (*SealResult, error) {
 	nif, err := domain.NewNIF(emisorNIF)
 	if err != nil {
@@ -28,7 +28,7 @@ func SealCancellation(emisorNIF, emisorNombre string, series, fecha string, sis 
 		return nil, fmt.Errorf("no se puede anular %s: el libro no tiene registros de esa empresa", series)
 	}
 
-	// verificación del salto n-1/n-2 (idéntica a SealInvoice)
+	// n-1/n-2 jump verification (identical to SealInvoice)
 	ult := toDomainLink(*cadena.Last)
 	var declarado, ant *domain.Enlace
 	if cadena.DeclaradoPorUltimo != nil {

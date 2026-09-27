@@ -58,3 +58,36 @@ func TestExportarPeriodoValidaFechas(t *testing.T) {
 	}
 	_ = time.Now
 }
+
+// TestExportLedgerNeutralizaFormulaInjection: fields that Excel would
+// interpret as formulas (=, +, -, @) must leave the agent escaped with a
+// leading single quote (audit network/input #3), so a hostile invoice
+// series or AEAT field cannot execute when the gestoría opens the CSV.
+func TestExportLedgerNeutralizaFormulaInjection(t *testing.T) {
+	filas := []persistence.LedgerRow{{
+		NIF: "B72877814", Serie: "=1+1", Date: "05-01-2027", Tipo: "F1",
+		Cuota: "-21.00", Importe: "121.00", Huella: "aabb", Estado: "pendiente",
+		CSV: "@AEAT", Remitido: "no",
+	}}
+	b, err := ExportLedger(filas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tabla, err := csv.NewReader(strings.NewReader(string(b))).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tabla) != 2 {
+		t.Fatalf("filas = %d, want 2", len(tabla))
+	}
+	esperado := map[int]string{0: "'=1+1", 4: "'-21.00", 7: "'@AEAT"}
+	for col, want := range esperado {
+		if got := tabla[1][col]; got != want {
+			t.Fatalf("columna %d = %q, want %q (csv: %v)", col, got, want, tabla[1])
+		}
+	}
+	// clean fields stay untouched
+	if tabla[1][2] != "F1" || tabla[1][6] != "pendiente" {
+		t.Fatalf("clean fields were altered: %v", tabla[1])
+	}
+}

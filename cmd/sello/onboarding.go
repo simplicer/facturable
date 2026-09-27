@@ -79,7 +79,8 @@ func onboardEmisor(srv *sello.Service, configPath string, nif, nombre *string) h
 		}
 		valido, err := domain.NewNIF(req.NIF)
 		if err != nil {
-			writeErr(w, err)
+			// semantic validation of the identity is a 422, not a 400
+			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
 		if req.Nombre == "" {
@@ -101,6 +102,6 @@ func onboardEmisor(srv *sello.Service, configPath string, nif, nombre *string) h
 		*nif, *nombre = cfg.EmisorNIF, cfg.EmisorNombre
 		srv.EmisorNIF, srv.EmisorNombre = *nif, *nombre
 		srv.Sistema.NumeroInstalacion = installationNumber(*nif)
-		writeJSON(w, map[string]any{"ok": true, "onboarding": false})
+		writeJSON(w, map[string]any{"data": map[string]any{"ok": true, "onboarding": false}})
 	}
 }

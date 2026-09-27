@@ -1,5 +1,5 @@
 // Package declaration serves the producer's responsible declaration
-// (declaración responsable, RRSIF art. 13-15): required to be visible in
+// (responsible declaration, RRSIF art. 13-15): required to be visible in
 // the system for every version, and delivered at acquisition time.
 package declaration
 

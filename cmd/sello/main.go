@@ -3,11 +3,11 @@
 //
 // Environment configuration:
 //
-//	SELLO_DB                    ruta de la base de datos (defecto var/sello.sqlite)
-//	SELLO_NIF / SELLO_NOMBRE    datos de la empresa que factura
-//	SELLO_CERT_P12 / SELLO_CERT_PASS  certificado cualificado (sin él, remisor simulado)
-//	SELLO_AEAT                  pruebas|produccion (defecto pruebas)
-//	FACTURABLE_API_URL          API pública de versiones (defecto https://api.facturable.es)
+//	SELLO_DB                    database path (default var/sello.sqlite)
+//	SELLO_NIF / SELLO_NOMBRE    invoicing company identity
+//	SELLO_CERT_P12 / SELLO_CERT_PASS  qualified certificate (without it, simulated remisor)
+//	SELLO_AEAT                  pruebas|produccion (default pruebas)
+//	FACTURABLE_API_URL          public versions API (default https://api.facturable.es)
 //
 // On first run without SELLO_NIF (and without etc/config.json, the wizard's
 // persisted identity) the agent does NOT abort: it starts in onboarding mode
@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -52,15 +53,24 @@ import (
 	sslmatep12 "software.sslmate.com/src/go-pkcs12"
 )
 
+// agentListenAddr is the ONLY address the agent may ever bind: the local
+// loopback. It is deliberately a constant and NOT configuration — the agent
+// holds the fiscal certificate and the invoice ledger, and must never be
+// reachable from another machine (audit hardening).
+const agentListenAddr = "127.0.0.1:8787"
+
 func main() {
 	version := env("FACTURABLE_VERSION", "0.1.0-unstable")
 	db := env("SELLO_DB", "var/sello.sqlite")
 	produccion := os.Getenv("SELLO_AEAT") == "produccion"
 
 	prodName := env("SELLO_PRODUCER_NAME", "Facturable")
-	prodNIF := env("SELLO_PRODUCER_NIF", "B00000000")
+	// Producer NIF: no hardcoded placeholder (audit #5). Production refuses
+	// to start without SELLO_PRODUCER_NIF; simulated mode borrows the emisor
+	// identity instead (see below).
+	prodNIF := env("SELLO_PRODUCER_NIF", "")
 	prodContact := env("SELLO_PRODUCER_CONTACT", "soporte@facturable.es")
-	if produccion && (prodNIF == "B00000000" || prodName == "Facturable") {
+	if produccion && (prodNIF == "" || prodName == "Facturable") {
 		log.Fatal("SELLO_PRODUCER_NIF/NAME/CONTACT reales obligatorios para remitir a producción (declaración responsable, art. 13-15)")
 	}
 	// Emisor identity: etc/config.json (persisted by the onboarding wizard)
@@ -73,9 +83,16 @@ func main() {
 	if nombre == "" {
 		nombre = nif
 	}
-	// Telemetría opt-in (desactivada por defecto): la preferencia vive en
-	// etc/config.json y este flag compartido la mantiene viva en memoria,
-	// así el endpoint la cambia sin reiniciar y el ticker diario la lee.
+	// Simulated mode only (the production guard above already required
+	// SELLO_PRODUCER_NIF): borrow the emisor identity so chainRow validation
+	// passes without any hardcoded producer NIF in the binary (audit #5).
+	// Nothing simulated ever reaches the AEAT.
+	if prodNIF == "" {
+		prodNIF = nif
+	}
+	// Opt-in telemetry (off by default): the preference lives in
+	// etc/config.json and this shared flag keeps it alive in memory, so the
+	// endpoint flips it without a restart and the daily ticker reads it.
 	var telemOptIn atomic.Bool
 	telemOptIn.Store(cfg.TelemetryOptIn)
 
@@ -178,9 +195,9 @@ func main() {
 		}
 	}()
 
-	// Planificador de remisión: la AEAT exige esperar entre envíos; un ciclo
-	// por minuto encaja con el control de flujo (spec AEAT §6.4.4.1).
-	// Con relay configurado, el mismo ciclo vacía el buzón cifrado.
+	// Submission scheduler: the AEAT mandates waiting between submissions;
+	// a per-minute cycle matches the flow control (AEAT spec 6.4.4.1).
+	// With the relay configured, the same cycle drains the encrypted inbox.
 	go func() {
 		for range time.Tick(60 * time.Second) {
 			n, err := srv.SubmitPending(context.Background())
@@ -199,11 +216,10 @@ func main() {
 		}
 	}()
 
-	// Auto-update: la promesa de la suscripción es que el agente sigue la
-	// normativa sin que el usuario reinstale nada. Cada 24h se pregunta al
-	// API si hay versión nueva; la descarga se verifica con SHA-256 y se
-	// reemplaza el binario en caliente (respaldo .bak), aplicándose al
-	// reiniciar.
+	// Auto-update: the subscription promise is that the agent follows the
+	// regulations without the user reinstalling anything. Every 24h it asks
+	// the API for a newer version; the download is verified with SHA-256 and
+	// the binary is hot-replaced (with a .bak fallback), applied on restart.
 	updater := sello.NewUpdater(env("FACTURABLE_API_URL", "https://api.facturable.es"))
 	go func() {
 		check := func() {
@@ -228,11 +244,11 @@ func main() {
 		}
 	}()
 
-	// Telemetría opt-in: un ping anónimo al día junto al ciclo del updater,
-	// solo si el usuario lo autorizó. El ping lleva versión, sistema
-	// operativo y cuántas facturas se sellaron en los últimos 30 días —
-	// NUNCA NIFs, nombres ni contenido de facturas: el recuento se computa
-	// en local sobre el libro y solo el número cruza la red.
+	// Opt-in telemetry: one anonymous ping per day next to the updater
+	// cycle, only when the user authorized it. The ping carries the version,
+	// the OS and how many invoices were stamped in the last 30 days —
+	// NEVER NIFs, names or invoice content: the count is computed locally
+	// over the ledger and only the number crosses the network.
 	telemetry := sello.NewTelemetry(env("FACTURABLE_API_URL", "https://api.facturable.es"))
 	go func() {
 		ping := func() {
@@ -255,8 +271,8 @@ func main() {
 	}()
 
 	pin := os.Getenv("SELLO_PIN")
-	// auth real en withPIN (middleware); guard queda como decorador neutro
-	guard := func(next http.HandlerFunc) http.HandlerFunc { return next }
+	// real auth: withPIN (middleware) protects ALL /v1/* routes at the end
+	// of the chain; no business handler sits outside it.
 	certTries := newRateLimiter(5, time.Minute)
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /v1/certificates", func(w http.ResponseWriter, r *http.Request) {
@@ -272,7 +288,7 @@ func main() {
 		}
 		saveCertificate(pin)(w, r)
 	})
-	mux.HandleFunc("POST /v1/emails", guard(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/emails", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			RecordUUID string `json:"record_uuid"`
 			To         string `json:"to"`
@@ -283,7 +299,7 @@ func main() {
 		}
 		f, ok, err := store.ByUUID(req.RecordUUID)
 		if err != nil || !ok {
-			writeErr(w, fmt.Errorf("no existe el registro solicitado"))
+			writeProblem(w, http.StatusNotFound, "no existe el registro solicitado")
 			return
 		}
 		cfg := sello.SMTPConfig{
@@ -304,29 +320,32 @@ func main() {
 			writeErr(w, err)
 			return
 		}
-		writeJSON(w, map[string]any{"enviado": true, "to": req.To})
-	}))
-	// POST /v1/stamps: sella el PDF ORIGINAL del cliente (post-procesador).
-	// El programa del cliente genera la factura con 100 líneas → sube el PDF
-	// aquí → extraemos los 9 campos fiscales → sellamos SU documento con QR.
-	mux.HandleFunc("POST /v1/stamps", guard(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"data": map[string]any{"enviado": true, "to": req.To}})
+	})
+	// POST /v1/stamps: stamps the client's ORIGINAL PDF (post-processor).
+	// The client's program generates the invoice with 100 lines, uploads the
+	// PDF here, we extract the 9 fiscal fields and stamp THEIR document with
+	// the QR.
+	mux.HandleFunc("POST /v1/stamps", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
 			writeErr(w, fmt.Errorf("no se pudo leer el formulario: %v", err))
 			return
 		}
 		f, _, err := r.FormFile("invoice")
 		if err != nil {
-			writeErr(w, fmt.Errorf("falta el fichero 'invoice' (PDF de tu programa)"))
+			writeProblem(w, http.StatusUnprocessableEntity, "falta el fichero 'invoice' (PDF de tu programa)")
 			return
 		}
 		defer f.Close()
-		pdfBytes, err := io.ReadAll(io.LimitReader(f, 30<<20))
+		// Hard 32 MB cap (audit network/input #1): an oversized upload is
+		// rejected, never silently truncated into a corrupt PDF.
+		pdfBytes, err := io.ReadAll(http.MaxBytesReader(w, f, 32<<20))
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
 
-		// campos fiscales confirmados por el humano (o auto-extraídos)
+		// fiscal fields confirmed by the human (or auto-extracted)
 		q := sello.QuickInvoice{
 			ClientName: r.FormValue("cliente"),
 			ClientNIF:  r.FormValue("nif"),
@@ -338,27 +357,36 @@ func main() {
 			q.Concept = "Factura sello directo"
 		}
 		if q.Base == "" {
-			writeErr(w, fmt.Errorf("falta la base imponible total (campo 'base')"))
+			writeProblem(w, http.StatusUnprocessableEntity, "falta la base imponible total (campo 'base')")
 			return
 		}
 
 		// sellar
-		lastSerie, _, _, _, _, _, okL, _ := store.Last(nif)
+		lastSerie, _, _, _, _, _, okL, err := store.Last(nif)
+		if err != nil {
+			writeErr(w, internalErr(err))
+			return
+		}
 		if !okL {
 			lastSerie = ""
 		}
 		draft, err := q.ToDraft(lastSerie, time.Now())
 		if err != nil {
-			writeErr(w, err)
+			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
 		res, err := srv.IngestDrafts([]ingest.Draft{draft})
-		if err != nil || res.Sellados == 0 {
+		if err != nil {
+			// persistence failures arrive marked ErrInternal → generic 500
+			writeErr(w, err)
+			return
+		}
+		if res.Sellados == 0 {
 			detalle := "no se pudo sellar"
-			if res != nil && len(res.Errores) > 0 {
+			if len(res.Errores) > 0 {
 				detalle = res.Errores[0].Detalle
 			}
-			writeErr(w, fmt.Errorf("%s", detalle))
+			writeProblem(w, http.StatusUnprocessableEntity, detalle)
 			return
 		}
 
@@ -386,48 +414,19 @@ func main() {
 		w.Header().Set("Content-Type", "application/pdf")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s-VERIFACTU.pdf", draft.Series))
 		_, _ = w.Write(stamped)
-	}))
+	})
 
-	// Quick form (bloqueante MVP): 5 fields, agent fills all defaults.
-	mux.HandleFunc("POST /v1/invoices", guard(func(w http.ResponseWriter, r *http.Request) {
-		var q sello.QuickInvoice
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&q); err != nil {
-			writeErr(w, err)
-			return
-		}
-		lastSerie, _, _, _, _, _, okL, err := store.Last(nif)
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-		if !okL {
-			lastSerie = ""
-		}
-		draft, err := q.ToDraft(lastSerie, time.Now())
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-		res, err := srv.IngestDrafts([]ingest.Draft{draft})
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-		if res.Sellados == 0 && len(res.Errores) > 0 {
-			writeErr(w, fmt.Errorf("%s", res.Errores[0].Detalle))
-			return
-		}
-		writeJSON(w, map[string]any{
-			"sellada": true, "serie": draft.Series,
-			"cuota": draft.Breakdowns[0].Fee, "total": draft.Breakdowns[0].Base,
-		})
-	}))
+	// PUT /v1/invoices/{uuid}: quick form (bloqueante MVP) as idempotent
+	// creation with a client-provided UUID (Zalando): same uuid + same
+	// invoice replays the stored stamping (200), same uuid + a different
+	// invoice conflicts (409). The record enters the chain with that UUID.
+	mux.HandleFunc("PUT /v1/invoices/{uuid}", putQuickInvoice(srv))
 
 	// POST /v1/invoices/{uuid}:duplicate (Google-style custom method): re-
 	// stamps a copy of that record dated today with a fresh series — the
 	// "repeat last month's invoice" button. ServeMux wildcards must fill a
 	// whole segment, so the ":duplicate" suffix arrives inside {uuid}.
-	mux.HandleFunc("POST /v1/invoices/{uuid}", guard(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/invoices/{uuid}", func(w http.ResponseWriter, r *http.Request) {
 		const action = ":duplicate"
 		seg := r.PathValue("uuid")
 		if !strings.HasSuffix(seg, action) {
@@ -440,26 +439,27 @@ func main() {
 				writeProblem(w, http.StatusNotFound, "no existe el registro solicitado")
 				return
 			}
-			writeErr(w, err)
+			// draft validation / stamping rejection (non-internal) is a 422
+			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
-		writeJSON(w, res)
-	}))
+		writeJSON(w, map[string]any{"data": res})
+	})
 
 	// POST /v1/recurring: the fixed monthly list of frequent clients; every
 	// invoice is generated + stamped in sequence and the summary answers.
-	mux.HandleFunc("POST /v1/recurring", guard(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/recurring", func(w http.ResponseWriter, r *http.Request) {
 		var clientes []sello.RecurringClient
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&clientes); err != nil {
 			writeErr(w, fmt.Errorf("el cuerpo debe ser un array de facturas fijas (cliente, nif, concepto, base, iva): %v", err))
 			return
 		}
 		if len(clientes) == 0 {
-			writeErr(w, fmt.Errorf("el lote de facturas fijas está vacío"))
+			writeProblem(w, http.StatusUnprocessableEntity, "el lote de facturas fijas está vacío")
 			return
 		}
-		writeJSON(w, sello.NewRecurringBatch(srv, clientes).StampAll())
-	}))
+		writeJSON(w, map[string]any{"data": sello.NewRecurringBatch(srv, clientes).StampAll()})
+	})
 
 	// Embedded 1-screen UI: the invoice form the smallest business can use.
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, _ *http.Request) {
@@ -482,7 +482,7 @@ func main() {
 		if info != nil {
 			latest, available = info.Version, true
 		}
-		writeJSON(w, map[string]any{"current": version, "latest": latest, "available": available})
+		writeJSON(w, map[string]any{"data": map[string]any{"current": version, "latest": latest, "available": available}})
 	})
 	mux.HandleFunc("GET /v1/connectivity", checkConnectivity)
 	// POST /v1/telemetry/optin {enabled}: the privacy toggle used by the
@@ -512,11 +512,14 @@ func main() {
 		}
 		f, _, err := r.FormFile("invoice")
 		if err != nil {
-			writeErr(w, fmt.Errorf("falta el fichero 'invoice' (PDF)"))
+			writeProblem(w, http.StatusUnprocessableEntity, "falta el fichero 'invoice' (PDF)")
 			return
 		}
 		defer f.Close()
-		pdfBytes, err := io.ReadAll(io.LimitReader(f, 30<<20))
+		// Hard 32 MB cap (audit network/input #2): the OCR path never sees a
+		// larger document, and oversized uploads are rejected instead of
+		// silently truncated.
+		pdfBytes, err := io.ReadAll(http.MaxBytesReader(w, f, 32<<20))
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -539,7 +542,7 @@ func main() {
 		nif, base, cuota, serie, fecha, err := pdf.ExtractFiscalFromText(text)
 		if err != nil {
 			// return what we got even if partial
-			writeJSON(w, map[string]any{
+			writeJSON(w, map[string]any{"data": map[string]any{
 				"method": method,
 				"texto":  text[:min(2000, len(text))],
 				"campos": map[string]string{
@@ -548,17 +551,17 @@ func main() {
 				},
 				"completo": false,
 				"nota":     "extracción parcial: confirma los campos manualmente",
-			})
+			}})
 			return
 		}
-		writeJSON(w, map[string]any{
+		writeJSON(w, map[string]any{"data": map[string]any{
 			"method": method,
 			"campos": map[string]string{
 				"nif": nif, "base": base, "cuota": cuota,
 				"serie": serie, "fecha": fecha,
 			},
 			"completo": true,
-		})
+		}})
 	})
 
 	// PUT /v1/onboarding: first-run wizard — validates the NIF, configures
@@ -581,24 +584,27 @@ func main() {
 			return
 		}
 		batchUUID := r.PathValue("uuid")
-		body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+		// Hard body cap (audit network/input #1): MaxBytesReader refuses the
+		// request above the limit instead of silently truncating the CSV.
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
 		hash := fmt.Sprintf("%x", sha256.Sum256(body))
-		if prev, ok, _ := store.GetIngestBatch(batchUUID); ok {
-			if prev.BodyHash != hash {
-				w.Header().Set("Content-Type", "application/problem+json")
-				w.WriteHeader(http.StatusConflict)
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"title": "Conflict", "status": 409,
-					"detail": "ese UUID ya se usó con otro cuerpo", "instance": r.URL.Path})
+		stored, batchSeen, err := store.GetIngestBatch(batchUUID)
+		if err != nil {
+			writeErr(w, internalErr(err))
+			return
+		}
+		if batchSeen {
+			if stored.BodyHash != hash {
+				writeProblem(w, http.StatusConflict, "ese UUID ya se usó con otro cuerpo")
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(prev.Response))
+			_, _ = w.Write([]byte(stored.Response))
 			return
 		}
 		res, err := srv.IngestCSV(bytes.NewReader(body))
@@ -606,11 +612,13 @@ func main() {
 			writeErr(w, err)
 			return
 		}
-		out, _ := json.Marshal(res)
+		// the batch response is stored enveloped so every replay (200) and
+		// the original creation (201) answer the same {data:...} shape
+		out, _ := json.Marshal(map[string]any{"data": res})
 		prev, fresh, err := store.SaveIngestBatch(persistence.IngestBatch{
 			UUID: batchUUID, BodyHash: hash, Response: string(out)})
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, internalErr(err))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -628,11 +636,11 @@ func main() {
 			writeErr(w, err)
 			return
 		}
-		writeJSON(w, map[string]int{"enviados": n})
+		writeJSON(w, map[string]any{"data": map[string]int{"enviados": n}})
 	})
 	// POST /v1/cancellations: registers the cancellation of an invoice; the
 	// cancellation record enters the chain like any other record.
-	mux.HandleFunc("POST /v1/cancellations", guard(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/cancellations", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Serie string `json:"serie"`
 			Fecha string `json:"fecha"`
@@ -642,19 +650,21 @@ func main() {
 			return
 		}
 		if req.Serie == "" || req.Fecha == "" {
-			writeErr(w, fmt.Errorf("serie y fecha son obligatorios"))
+			writeProblem(w, http.StatusUnprocessableEntity, "serie y fecha son obligatorios")
 			return
 		}
 		if _, err := srv.Cancel(req.Serie, req.Fecha); err != nil {
-			writeErr(w, err)
+			// domain validation of the series/date is a 422; persistence
+			// failures arrive marked ErrInternal and stay a generic 500
+			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
-		writeJSON(w, map[string]any{"anulada": true, "serie": req.Serie, "fecha": req.Fecha})
-	}))
-	mux.HandleFunc("GET /v1/records/{uuid}/pdf", guard(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"data": map[string]any{"anulada": true, "serie": req.Serie, "fecha": req.Fecha}})
+	})
+	mux.HandleFunc("GET /v1/records/{uuid}/pdf", func(w http.ResponseWriter, r *http.Request) {
 		f, ok, err := store.ByUUID(r.PathValue("uuid"))
 		if err != nil || !ok {
-			writeErr(w, fmt.Errorf("no existe el registro solicitado"))
+			writeProblem(w, http.StatusNotFound, "no existe el registro solicitado")
 			return
 		}
 		b, err := renderRecordPDF(f, nif, nombre)
@@ -664,13 +674,13 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/pdf")
 		_, _ = w.Write(b)
-	}))
+	})
 
-	// Colección de registros: representación por query (JSON por defecto,
-	// CSV para la gestoría con formato=csv + filtros por fecha).
+	// Records collection: query-selected representation (paginated JSON by
+	// default, CSV for the tax advisor with format=csv + date filters).
 	mux.HandleFunc("GET /v1/records", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		if q.Get("format") == "csv" {
+		if r.URL.Query().Get("format") == "csv" {
+			q := r.URL.Query()
 			from, to := q.Get("from"), q.Get("to")
 			if from == "" {
 				from = "01-01-2020"
@@ -688,44 +698,125 @@ func main() {
 			_, _ = w.Write(b)
 			return
 		}
-		filas, err := store.Ledger(nif, 0, 1_000_000_000, 1000)
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-		writeJSON(w, map[string]any{"data": filas})
+		writeRecordsPage(w, r, store, nif)
 	})
 
-	// Memoria de clientes: últimos clientes por frecuencia de uso, para
-	// auto-rellenar el formulario (limit, defecto 20).
+	// Client memory: recent clients by usage frequency, to auto-fill the
+	// form (limit, default 20).
 	mux.HandleFunc("GET /v1/clients", func(w http.ResponseWriter, r *http.Request) {
 		limite := 20
 		if v := r.URL.Query().Get("limit"); v != "" {
 			n, err := strconv.Atoi(v)
 			if err != nil || n < 1 {
-				writeErr(w, fmt.Errorf("el parámetro 'limit' debe ser un entero positivo"))
+				writeProblem(w, http.StatusUnprocessableEntity, "el parámetro 'limit' debe ser un entero positivo")
 				return
 			}
 			limite = n
 		}
 		clientes, err := store.FrequentClients(limite)
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, internalErr(err))
 			return
 		}
 		writeJSON(w, map[string]any{"data": clientes})
 	})
 
-	// Auth local (audit high): SELLO_PIN protege /v1/* con Bearer; status y
-	// connectivity quedan abiertos para diagnóstico.
-	handler := withPIN(pin, mux)
+	// Local auth (audit high): withPIN protects ALL /v1/* routes with a
+	// Bearer; only /status and the UI (GET /) stay open. securityHeaders adds
+	// the browser-protection headers to EVERY response (audit network/input
+	// #4).
+	handler := securityHeaders(withPIN(pin, mux))
 
-	addr := env("SELLO_LISTEN", "127.0.0.1:8787")
+	// Audit hardening: the bind address is HARD-CODED to the loopback and
+	// deliberately NOT configurable — the agent holds fiscal secrets (certs,
+	// ledger) and must never end up listening on an external interface.
+	addr := agentListenAddr
 	log.Printf("sello escuchando en http://%s (modo %s)", addr, modo)
 	log.Fatal(http.ListenAndServe(addr, handler))
 }
 
-// rateLimiter simple de ventana fija por clave (audit: límite subidas cert).
+// putQuickInvoice answers PUT /v1/invoices/{uuid}: the five-field quick
+// form stamped under the client-provided UUID. Same uuid + same invoice
+// replays as 200; same uuid + a different invoice conflicts as 409
+// (idempotent creation per Zalando). The emisor identity is read from the
+// service so onboarding changes apply live.
+func putQuickInvoice(srv *sello.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		recordUUID := r.PathValue("uuid")
+		if !isUUIDFormat(recordUUID) {
+			writeProblem(w, http.StatusBadRequest, "la ruta requiere un UUID de factura válido")
+			return
+		}
+		var q sello.QuickInvoice
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&q); err != nil {
+			writeErr(w, fmt.Errorf("el cuerpo debe ser una factura rápida (cliente, nif, concepto, base, iva): %v", err))
+			return
+		}
+		lastSerie, _, _, _, _, _, okL, err := srv.Store.Last(srv.EmisorNIF)
+		if err != nil {
+			writeErr(w, internalErr(err))
+			return
+		}
+		if !okL {
+			lastSerie = ""
+		}
+		draft, err := q.ToDraft(lastSerie, time.Now())
+		if err != nil {
+			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		// idempotent replay: a repeated client UUID never double-stamps.
+		// Same uuid + same invoice replays 200; same uuid + a different
+		// invoice conflicts 409. The comparison uses the stored XML (the
+		// draft series moves with the ledger, so it cannot decide).
+		rate := q.VATRate
+		if rate == "" {
+			rate = "21"
+		}
+		existing, seen, err := srv.Store.ByUUID(recordUUID)
+		if err != nil {
+			writeErr(w, internalErr(err))
+			return
+		}
+		if seen {
+			raw, okXML, err := srv.Store.XMLByUUID(recordUUID)
+			if err != nil {
+				writeErr(w, internalErr(err))
+				return
+			}
+			orig := sello.QuickInvoiceFromXML(raw)
+			sameInvoice := okXML &&
+				orig.Concept == q.Concept &&
+				orig.ClientName == q.ClientName &&
+				orig.ClientNIF == q.ClientNIF &&
+				sameAmount(orig.Base, q.Base) &&
+				sameAmount(orig.VATRate, rate)
+			if !sameInvoice {
+				writeProblem(w, http.StatusConflict, "ese UUID ya se usó con otra factura")
+				return
+			}
+			writeJSON(w, map[string]any{"data": map[string]any{
+				"sellada": true, "uuid": recordUUID, "serie": existing.Serie,
+				"cuota": existing.Cuota, "total": existing.Importe, "reenviada": true}})
+			return
+		}
+		draft.UUID = recordUUID
+		res, err := srv.IngestDrafts([]ingest.Draft{draft})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if res.Sellados == 0 && len(res.Errores) > 0 {
+			writeProblem(w, http.StatusUnprocessableEntity, res.Errores[0].Detalle)
+			return
+		}
+		writeJSONStatus(w, http.StatusCreated, map[string]any{"data": map[string]any{
+			"sellada": true, "uuid": recordUUID, "serie": draft.Series,
+			"cuota": draft.Breakdowns[0].Fee, "total": draft.Breakdowns[0].Base}})
+	}
+}
+
+// rateLimiter: simple fixed-window per-key limiter (audit: cert upload cap).
 type rateLimiter struct {
 	mu     sync.Mutex
 	window time.Duration
@@ -765,11 +856,25 @@ func installationNumber(nif string) string {
 	return string(out)
 }
 
-// withPIN exige Authorization: Bearer <SELLO_PIN> en las rutas /v1/*.
+// securityHeaders adds the browser-protection headers to EVERY response
+// (audit network/input #4): nosniff stops MIME sniffing on agent downloads
+// (PDF/CSV) and DENY forbids framing the local agent from other origins.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// withPIN requires Authorization: Bearer <SELLO_PIN> on /v1/* routes.
+// The comparison is constant time (crypto/subtle) so the PIN cannot be
+// leaked character by character through a timing attack (audit high).
 func withPIN(pin string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if pin != "" && strings.HasPrefix(r.URL.Path, "/v1/") &&
-			r.Header.Get("Authorization") != "Bearer "+pin {
+			subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+pin)) != 1 {
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -820,7 +925,7 @@ func (fakeSubmitter) Submit(_ context.Context, soapXML string) (application.Resp
 	}, nil
 }
 
-// seriesAndDateFromXML extrae la primera IDFactura del sobre (sólo simulación).
+// seriesAndDateFromXML extracts the first IDFactura of the envelope (simulation only).
 func seriesAndDateFromXML(xmlStr string) (serie, fecha string) {
 	extraer := func(ini, fin string) string {
 		i := strings.Index(xmlStr, ini)
@@ -848,6 +953,76 @@ func env(k, def string) string {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeJSONStatus answers the envelope under an explicit status code (201
+// for idempotent creations, 200 for replays).
+func writeJSONStatus(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// isUUIDFormat accepts the canonical 8-4-4-4-12 hexadecimal form: the shape
+// every client-provided id must have on the API (Zalando).
+func isUUIDFormat(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	for i, c := range id {
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+			if !isHex {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Pagination of the records collection (Zalando): ?page=N&page-size=M with
+// defaults and a hard cap so one request can never dump the whole ledger.
+const (
+	defaultPage     = 1
+	defaultPageSize = 50
+	maxPageSize     = 500
+)
+
+// writeRecordsPage answers the JSON representation of GET /v1/records with
+// pagination: ?page=1&page-size=50 by default, envelope {data:[…]} and meta
+// {page, page_size, total}. Invalid query values are a 422 (validation).
+func writeRecordsPage(w http.ResponseWriter, r *http.Request, store *persistence.Store, nif string) {
+	page, pageSize := defaultPage, defaultPageSize
+	if v := r.URL.Query().Get("page"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			writeProblem(w, http.StatusUnprocessableEntity, "el parámetro 'page' debe ser un entero positivo")
+			return
+		}
+		page = n
+	}
+	if v := r.URL.Query().Get("page-size"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > maxPageSize {
+			writeProblem(w, http.StatusUnprocessableEntity, fmt.Sprintf("el parámetro 'page-size' debe estar entre 1 y %d", maxPageSize))
+			return
+		}
+		pageSize = n
+	}
+	filas, total, err := store.LedgerPage(nif, 0, 1_000_000_000, pageSize, (page-1)*pageSize)
+	if err != nil {
+		writeErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, map[string]any{
+		"data": filas,
+		"meta": map[string]int{"page": page, "page_size": pageSize, "total": total},
+	})
 }
 
 // latestUUID returns the most recent record UUID.
@@ -885,6 +1060,17 @@ func renderRecordPDF(f persistence.LedgerRow, nif, nombre string) ([]byte, error
 	})
 }
 
+// sameAmount compares two decimal amounts by their exact cents (a replayed
+// invoice may spell "1000" where the stored one reads "1000.00").
+func sameAmount(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ca, ea := application.ToCents(a)
+	cb, eb := application.ToCents(b)
+	return ea == nil && eb == nil && ca == cb
+}
+
 // baseDesde computa base = total - cuota with exact cents (audit fix).
 func baseDesde(importe, cuota string) string {
 	ti, err1 := application.ToCents(importe)
@@ -896,10 +1082,24 @@ func baseDesde(importe, cuota string) string {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	// Persistence/internal failures never cross the API boundary with their
+	// driver detail — SQL text stays in the server log (audit network/input
+	// #8); the client gets a generic problem+json answer.
+	if errors.Is(err, persistence.ErrInternal) {
+		log.Printf("error interno: %v", err)
+		writeProblem(w, http.StatusInternalServerError, "error interno del agente; inténtalo de nuevo")
+		return
+	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusBadRequest)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"title": "Error del agente", "status": 400, "detail": err.Error()})
+}
+
+// internalErr marks a persistence failure so writeErr hides its detail from
+// the client (audit network/input #8).
+func internalErr(cause error) error {
+	return fmt.Errorf("%w: %v", persistence.ErrInternal, cause)
 }
 
 // writeProblem answers with a problem+json body and the given status
@@ -913,8 +1113,8 @@ func writeProblem(w http.ResponseWriter, status int, detail string) {
 
 // onboarding de certificado -------------------------------------------------
 
-// saveCertificate recibe un P12 por multipart y lo instala (0600) para
-// el próximo arranque. Contraseña por formulario aparte: nunca se guarda.
+// saveCertificate receives a P12 via multipart and installs it (0600) for
+// the next start. The password travels in a separate form field: never stored.
 func saveCertificate(pin string) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseMultipartForm(8 << 20); err != nil {
@@ -945,10 +1145,10 @@ func saveCertificate(pin string) func(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, fmt.Errorf("no se pudo cifrar el certificado: %v", err))
 			return
 		}
-		writeJSON(w, map[string]any{
+		writeJSON(w, map[string]any{"data": map[string]any{
 			"guardado": dest,
 			"nota":     "reinicia el agente con SELLO_CERT_P12=" + dest + " para remitir a la AEAT",
-		})
+		}})
 	}
 }
 
@@ -964,9 +1164,9 @@ var aeatHandshake = func() error {
 	return nil
 }
 
-// certificateState carga el certificado configurado y devuelve su estado
-// junto al aviso de renovación cuando caduca pronto (el asistente lo muestra
-// antes de que un certificado caducado rompa la remisión en silencio).
+// certificateState loads the configured certificate and returns its state
+// plus the renewal warning when it expires soon (the wizard shows it before
+// an expired certificate silently breaks submission).
 func certificateState(p12Path, password string) (estado, aviso string, err error) {
 	cert, err := soap.LoadP12(p12Path, password)
 	if err != nil {
@@ -979,8 +1179,8 @@ func certificateState(p12Path, password string) (estado, aviso string, err error
 	return "ok", certExpiryWarning(leaf.NotAfter, time.Now()), nil
 }
 
-// certExpiryWarning devuelve el aviso de renovación cuando quedan menos de
-// 30 días de vida al certificado ("" en otro caso).
+// certExpiryWarning returns the renewal warning when the certificate has
+// less than 30 days of life left ("" otherwise).
 func certExpiryWarning(notAfter, now time.Time) string {
 	days := int(notAfter.Sub(now).Hours() / 24)
 	switch {
@@ -993,9 +1193,9 @@ func certExpiryWarning(notAfter, now time.Time) string {
 	}
 }
 
-// checkConnectivity verifica carga del certificado y handshake TLS contra el
-// entorno de pruebas de la AEAT (prewww1). Diagnóstico de onboarding; añade
-// la alerta de caducidad cuando quedan menos de 30 días.
+// checkConnectivity verifies certificate loading and the TLS handshake
+// against the AEAT test environment (prewww1). Onboarding diagnostics; it
+// adds the expiry alert when less than 30 days remain.
 func checkConnectivity(w http.ResponseWriter, _ *http.Request) {
 	resultado := map[string]any{}
 	p12 := os.Getenv("SELLO_CERT_P12")
@@ -1015,9 +1215,9 @@ func checkConnectivity(w http.ResponseWriter, _ *http.Request) {
 	}
 	if err := aeatHandshake(); err != nil {
 		resultado["aeat_pruebas"] = "error: " + err.Error()
-		writeJSON(w, resultado)
+		writeJSON(w, map[string]any{"data": resultado})
 		return
 	}
 	resultado["aeat_pruebas"] = "ok"
-	writeJSON(w, resultado)
+	writeJSON(w, map[string]any{"data": resultado})
 }

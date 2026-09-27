@@ -7,9 +7,12 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
 	"sync"
 	"time"
+
+	"facturable/internal/verifactu/domain"
 )
 
 // Server stores keys and opaque envelopes.
@@ -61,7 +64,16 @@ func (s *Server) Mount(mux *http.ServeMux) {
 }
 
 func (s *Server) putKey(w http.ResponseWriter, r *http.Request) {
-	nif := r.PathValue("nif")
+	// Audit hardening: the path NIF must be a well-formed Spanish NIF
+	// (DNI/NIE/CIF with valid control character) before any public key is
+	// accepted; garbage otherwise pollutes the key registry. The stored
+	// value is the canonical form (uppercase, trimmed).
+	nifValor, err := domain.NewNIF(r.PathValue("nif"))
+	if err != nil {
+		problem(w, 422, err.Error(), r)
+		return
+	}
+	nif := nifValor.Value()
 	var body struct {
 		Pubkey string `json:"pubkey"` // base64 X25519 public key
 	}
@@ -129,7 +141,7 @@ VALUES (?,?,?,?,?,?);`, id, nif,
 		base64.StdEncoding.EncodeToString(env.Ciphertext),
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
-		problem(w, 500, err.Error(), r)
+		internalProblem(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -145,7 +157,7 @@ func (s *Server) listEnvelopes(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Query(`SELECT id, eph_pub, nonce, ciphertext FROM relay_envelopes
 WHERE nif=? AND delivered=0 ORDER BY created_at LIMIT 100;`, nif)
 	if err != nil {
-		problem(w, 500, err.Error(), r)
+		internalProblem(w, r, err)
 		return
 	}
 	defer rows.Close()
@@ -160,7 +172,7 @@ WHERE nif=? AND delivered=0 ORDER BY created_at LIMIT 100;`, nif)
 		var it item
 		var ep, no, ci string
 		if err := rows.Scan(&it.ID, &ep, &no, &ci); err != nil {
-			problem(w, 500, err.Error(), r)
+			internalProblem(w, r, err)
 			return
 		}
 		it.EphemeralPub, it.Nonce, it.Ciphertext = ep, no, ci
@@ -173,7 +185,7 @@ WHERE nif=? AND delivered=0 ORDER BY created_at LIMIT 100;`, nif)
 func (s *Server) ackEnvelope(w http.ResponseWriter, r *http.Request) {
 	_, err := s.db.Exec(`UPDATE relay_envelopes SET delivered=1 WHERE id=?;`, r.PathValue("uuid"))
 	if err != nil {
-		problem(w, 500, err.Error(), r)
+		internalProblem(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -183,6 +195,13 @@ func (s *Server) ackEnvelope(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Purge() {
 	cutoff := time.Now().UTC().Add(-TTL).Format(time.RFC3339)
 	_, _ = s.db.Exec(`DELETE FROM relay_envelopes WHERE delivered=1 OR created_at < ?;`, cutoff)
+}
+
+// internalProblem answers a 500 with a generic detail: the storage cause is
+// logged server-side and its SQL text never reaches the client (audit).
+func internalProblem(w http.ResponseWriter, r *http.Request, cause error) {
+	log.Printf("relay api: %v", cause)
+	problem(w, 500, "error interno; inténtalo de nuevo", r)
 }
 
 func problem(w http.ResponseWriter, status int, detail string, r *http.Request) {

@@ -50,7 +50,7 @@ type Submitter interface {
 
 // respuestaEnvelope mirrors the AEAT response XML by local name (prefixes
 // vary: sf:, sum:, ...). Field names follow the record design of the
-// Descripción de los servicios web v1.0.3.
+// official web services description spec v1.0.3.
 type respuestaEnvelope struct {
 	Body struct {
 		Respuesta struct {

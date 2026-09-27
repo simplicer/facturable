@@ -66,7 +66,7 @@ func SendInvoiceEmail(cfg SMTPConfig, to, subject string, pdf []byte, filename s
 	fmt.Fprintf(w, "--%s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s\r\n", boundary, subject)
 	fmt.Fprintf(w, "--%s\r\nContent-Type: application/pdf; name=%q\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=%q\r\n\r\n",
 		boundary, filename, filename)
-	// base64 en líneas de 76 chars (RFC 2045)
+	// base64 in 76-char lines (RFC 2045)
 	enc := base64Lines(pdf)
 	fmt.Fprintf(w, "%s\r\n", enc)
 	fmt.Fprintf(w, "--%s--\r\n", boundary)

@@ -1,6 +1,6 @@
-// Package pdf escribe el PDF de la factura sellada (A4, Helvetica base,
-// QR dibujado como rectángulos). Escritor propio mínimo PDF 1.4: sin
-// dependencias, auditable (ADR-003).
+// Package pdf writes the stamped-invoice PDF (A4, base Helvetica, QR drawn
+// as rectangles). Minimal in-house PDF 1.4 writer: no dependencies,
+// auditable (ADR-003).
 package pdf
 
 import (
@@ -11,7 +11,7 @@ import (
 	"facturable/internal/sello/qrcode"
 )
 
-// QR geometry per the official FAQ (posibilidad-remisión...): the QR must
+// QR geometry per the official FAQ (possibility of remission section): the QR must
 // measure between 30x30 and 40x40 mm (TicketBAI range), sit at the START of
 // the invoice before any content, top-center for portrait layouts, and
 // appear exactly once on the first page.
@@ -38,7 +38,7 @@ type DatosFactura struct {
 	URLCotejo                 string // URL del QR (generada con domain/qr)
 }
 
-// DesgloseFactura es una línea de IVA impresa.
+// DesgloseFactura is one printed VAT line.
 type DesgloseFactura struct {
 	Tipo, Base, Cuota string
 }
@@ -53,7 +53,7 @@ func Factura(d DatosFactura) ([]byte, error) {
 	c.texto(400, 800, 16, "FACTURA "+d.Serie)
 	c.texto(400, 784, 10, "Date: "+d.Date+"   Tipo: "+d.Tipo)
 
-	// cliente y descripción
+	// client and description
 	c.texto(40, 740, 11, "CLIENTO")
 	c.texto(40, 726, 10, d.ClienteNombre)
 	c.texto(40, 713, 10, "NIF: "+d.ClienteNIF)
@@ -89,7 +89,7 @@ func Factura(d DatosFactura) ([]byte, error) {
 	return c.pdf(), nil
 }
 
-// dibujarQR pinta la matriz con el tamaño de módulo calculado (30mm side).
+// drawQR paints the matrix with the computed module size (30mm side).
 func dibujarQR(c *contenido, m *qrcode.Matrix, x, yBase int, escala float64) {
 	for r := 0; r < m.Size; r++ {
 		for col := 0; col < m.Size; col++ {
@@ -115,7 +115,7 @@ func (c *contenido) linea(x0, y0, x1, y1 int) {
 	fmt.Fprintf(c.b, "%s %s m %s %s l S\n", fnum(float64(x0)), fnum(float64(y0)), fnum(float64(x1)), fnum(float64(y1)))
 }
 
-// pdf ensambla el fichero: catálogo, páginas, página, fuente y contenido.
+// assemblePDF builds the file: catalog, pages, page, font and content.
 func (c *contenido) pdf() []byte {
 	var objs []string
 	stream := c.b.String()

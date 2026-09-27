@@ -2,10 +2,10 @@ package domain
 
 import "fmt"
 
-// CategoriaError clasifica un código de error de la AEAT según su efecto
-// sobre el envío (clasificación derivada del documento oficial de
-// validaciones: 4xxx rechazo total, 1xxx rechazo de chainRow, 2xxx aceptado
-// con errores, 3000 duplicado, 35xx error transitorio de la AEAT).
+// CategoriaError classifies an AEAT error code by its effect on the
+// submission (classification derived from the official validation document:
+// 4xxx total rejection, 1xxx chainRow rejection, 2xxx accepted with errors,
+// 3000 duplicate, 35xx transient AEAT error).
 type CategoriaError string
 
 const (
@@ -17,27 +17,27 @@ const (
 	CategoriaDesconocido     CategoriaError = "desconocido"
 )
 
-// InfoError es la ficha de un código de error: qué significa y qué debe
-// hacer el usuario (mensajes en español; la acción es la parte que evita
-// tickets de soporte, ver INFORME-NEGOCIO §1.3).
+// InfoError is the card of one error code: what it means and what the user
+// must do (the message strings are end-user facing Spanish; the action is
+// the part that prevents support tickets, see INFORME-NEGOCIO section 1.3).
 type InfoError struct {
 	Codigo      string
 	Description string
 	Categoria   CategoriaError
-	// Reintentable: el reintento automático puede resolverlo (solo errores
-	// transitorios del lado AEAT).
+	// Reintentable: an automatic retry may resolve it (only transient
+	// AEAT-side errors).
 	Reintentable bool
-	// Aceptado: el chainRow consta en la AEAT a pesar del código (avisos y
-	// duplicados se tratan como aceptados).
+	// Aceptado: the chainRow is registered at the AEAT despite the code
+	// (warnings and duplicates count as accepted).
 	Aceptado bool
-	// Accion es la recomendación en español para mostrar al usuario.
+	// Accion is the end-user facing Spanish recommendation to display.
 	Accion string
 }
 
-// erroresAEAT codifica el catálogo oficial. Descripciones y categorías
-// provienen del documento de validaciones AEAT; la acción es nuestra.
+// erroresAEAT encodes the official catalog. Descriptions and categories
+// come from the AEAT validation document; the action wording is ours.
 var erroresAEAT = map[string]InfoError{
-	// 4xxx: rechazo total del envío.
+	// 4xxx: total rejection of the submission.
 	"4100": {Codigo: "4100", Description: "Esquema XML no válido", Categoria: CategoriaRechazoTotal, Accion: "Actualiza la aplicación y reintenta; si persiste, avísanos (error de formato del mensaje)."},
 	"4101": {Codigo: "4101", Description: "Campo obligatorio ausente en header", Categoria: CategoriaRechazoTotal, Accion: "Revisa los datos de la empresa (NIF y nombre) en Ajustes."},
 	"4102": {Codigo: "4102", Description: "Certificado no válido", Categoria: CategoriaRechazoTotal, Accion: "El certificado digital no es aceptado: vuelve a instalarlo desde Ajustes."},
@@ -98,8 +98,8 @@ var erroresAEAT = map[string]InfoError{
 	"3501": {Codigo: "3501", Description: "Error de integridad de base de datos en AEAT", Categoria: CategoriaErrorAEAT, Reintentable: true, Accion: "Hacienda tuvo un error transitorio: se reintenta automáticamente."},
 }
 
-// ClasificarError devuelve la ficha de un código AEAT; los códigos no
-// catalogados obtienen una ficha conservadora (ni aceptado ni reintentable).
+// ClasificarError returns the card of an AEAT code; uncatalogued codes get
+// a conservative card (neither accepted nor retryable).
 func ClasificarError(codigo string) InfoError {
 	if info, ok := erroresAEAT[codigo]; ok {
 		return info

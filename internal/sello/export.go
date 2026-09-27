@@ -9,9 +9,9 @@ import (
 	"facturable/internal/sello/persistence"
 )
 
-// ExportLedger produce el CSV del periodo para la gestoría (libro de
-// facturas emitidas con su estado AEAT). Disponible SIEMPRE, con o sin
-// licencia vigente: el usuario nunca es rehén de sus datos.
+// ExportLedger produces the period CSV for the tax advisor (issued-invoice
+// book with its AEAT state). Available ALWAYS, with or without a valid
+// license: the user is never held hostage by their own data.
 func ExportLedger(filas []persistence.LedgerRow) ([]byte, error) {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
@@ -22,14 +22,34 @@ func ExportLedger(filas []persistence.LedgerRow) ([]byte, error) {
 	}
 	for _, f := range filas {
 		if err := w.Write([]string{
-			f.Serie, f.Date, f.Tipo, fmt.Sprintf("%s|%s", f.Cuota, f.Importe),
-			f.Cuota, f.Importe, f.Estado, f.CSV, f.Huella, f.Remitido,
+			sanitizeCSVField(f.Serie), sanitizeCSVField(f.Date), sanitizeCSVField(f.Tipo),
+			sanitizeCSVField(fmt.Sprintf("%s|%s", f.Cuota, f.Importe)),
+			sanitizeCSVField(f.Cuota), sanitizeCSVField(f.Importe),
+			sanitizeCSVField(f.Estado), sanitizeCSVField(f.CSV),
+			sanitizeCSVField(f.Huella), sanitizeCSVField(f.Remitido),
 		}); err != nil {
 			return nil, err
 		}
 	}
 	w.Flush()
 	return buf.Bytes(), w.Error()
+}
+
+// sanitizeCSVField neutralizes CSV formula injection (audit network/input
+// #3): a field beginning with =, +, - or @ leaves the agent prefixed with a
+// single quote, so Excel/LibreOffice render it as text instead of executing
+// it when the tax advisor opens the exported book. Ledger data partly comes
+// from customer CSVs, so any field is potentially hostile.
+func sanitizeCSVField(v string) string {
+	if v == "" {
+		return v
+	}
+	switch v[0] {
+	case '=', '+', '-', '@':
+		return "'" + v
+	default:
+		return v
+	}
 }
 
 // ExportPeriod vuelca el libro de un rango de fechas (DD-MM-AAAA).
@@ -47,7 +67,8 @@ func (s *Service) ExportPeriod(desde, hasta string) ([]byte, int, error) {
 	}
 	filas, err := s.Store.Ledger(s.EmisorNIF, 0, 1_000_000_000, 1_000_000)
 	if err != nil {
-		return nil, 0, err
+		// persistence detail stays server-side (audit #8)
+		return nil, 0, fmt.Errorf("%w: %v", persistence.ErrInternal, err)
 	}
 	seleccion := filtrarPeriodo(filas, d, h)
 	b, err := ExportLedger(seleccion)

@@ -40,13 +40,13 @@ func TestOnboardEmisor(t *testing.T) {
 		{
 			name:       "invalid control letter rejects the whole onboarding",
 			body:       map[string]string{"nif": "12345678A", "nombre": "Impostor"},
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusUnprocessableEntity, // semantic validation (Zalando)
 			wantConfig: false,
 		},
 		{
 			name:       "empty nif is rejected",
 			body:       map[string]string{"nombre": "Alguien"},
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusUnprocessableEntity, // semantic validation (Zalando)
 			wantConfig: false,
 		},
 	}
@@ -92,12 +92,14 @@ func TestOnboardEmisorAnswersOnboardingFalse(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler(rec, httptest.NewRequest(http.MethodPut, "/v1/onboarding", bytes.NewReader(raw)))
 
-	var out map[string]any
+	var out struct {
+		Data map[string]any `json:"data"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("response is not JSON: %v", err)
 	}
-	if out["ok"] != true || out["onboarding"] != false {
-		t.Errorf("response = %v, want {ok:true, onboarding:false}", out)
+	if out.Data["ok"] != true || out.Data["onboarding"] != false {
+		t.Errorf("data = %v, want {ok:true, onboarding:false}", out.Data)
 	}
 }
 

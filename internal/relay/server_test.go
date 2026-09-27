@@ -106,3 +106,50 @@ func TestCicloRelayClaveSobreAck(t *testing.T) {
 		}
 	}
 }
+
+// TestPutKeyValidaNIF pins the audit fix: PUT /v1/keys/{nif} must reject a
+// malformed NIF (422) even with a perfectly good public key, and must store
+// the canonical (uppercase, trimmed) NIF so later lookups by any casing hit
+// the same registry row.
+func TestPutKeyValidaNIF(t *testing.T) {
+	_, ts := nuevoServidor(t)
+	cli := ts.Client()
+
+	agente, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := base64.StdEncoding.EncodeToString(agente.PublicKey().Bytes())
+	cuerpo := `{"pubkey":"` + pub + `"}`
+
+	put := func(nif string) int {
+		req, _ := http.NewRequest(http.MethodPut, ts.URL+"/v1/keys/"+nif, strings.NewReader(cuerpo))
+		r, _ := cli.Do(req)
+		return r.StatusCode
+	}
+	// well-formed pubkey + garbage NIF: only the NIF can be the reason
+	for _, bad := range []string{"hack", "12345678A", "B-7287781-4", "..."} {
+		if got := put(bad); got != 422 {
+			t.Fatalf("PUT key NIF %q = %d, want 422 (invalid NIF rejected)", bad, got)
+		}
+	}
+	// valid NIF in lowercase registers 204...
+	if got := put("b72877814"); got != 204 {
+		t.Fatalf("PUT key NIF válido = %d, want 204", got)
+	}
+	// ...and the key is stored under the canonical form
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/keys/B72877814", nil)
+	r, _ := cli.Do(req)
+	if r == nil || r.StatusCode != 200 {
+		t.Fatalf("GET key canónica = %v, want 200 (NIF normalizado al guardar)", r)
+	}
+	var out struct {
+		Data struct {
+			Pubkey string `json:"pubkey"`
+		} `json:"data"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&out)
+	if out.Data.Pubkey != pub {
+		t.Fatalf("pubkey canónica = %q, want %q", out.Data.Pubkey, pub)
+	}
+}

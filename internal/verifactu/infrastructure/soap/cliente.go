@@ -32,7 +32,7 @@ var (
 		PersonURL: "https://www1.agenciatributaria.gob.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
 		SealURL:   "https://www10.agenciatributaria.gob.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
 	}
-	// Testing es el entorno de preproducción de la AEAT.
+	// Testing is the AEAT pre-production environment.
 	Testing = AeatEndpoints{
 		PersonURL: "https://prewww1.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
 		SealURL:   "https://prewww10.aeat.es/wlpl/TIKE-CONT/ws/SistemaFacturacion/VerifactuSOAP",
@@ -46,8 +46,8 @@ type Client struct {
 	certCN string
 }
 
-// NewClient construye el cliente para una URL de entorno. El certificado
-// puede ser de persona física/jurídica (www1) o de sello (www10).
+// NewClient builds the client for an environment URL. The certificate can
+// be an individual/legal-entity one (www1) or an electronic seal (www10).
 func NewClient(url string, cert tls.Certificate) *Client {
 	// IMPORTANT: the client certificate goes in Certificates (mTLS); the
 	// trust anchors stay the SYSTEM pool (nil RootCAs). Pinning the server
@@ -67,8 +67,8 @@ func NewClient(url string, cert tls.Certificate) *Client {
 	}
 }
 
-// LoadP12 carga un certificado cualificado en formato P12/PFX.
-// Sólo admite formato moderno (AEAD/SHA1 algoritmos estándar de p12).
+// LoadP12 loads a qualified certificate in P12/PFX format.
+// Only the modern format is supported (standard p12 AEAD/SHA1 algorithms).
 func LoadP12(path, password string) (tls.Certificate, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -87,8 +87,8 @@ func LoadP12(path, password string) (tls.Certificate, error) {
 // ErrSOAPFailure marca respuestas HTTP != 200 o faults SOAP.
 var ErrSOAPFailure = errors.New("la AEAT rechazó la llamada SOAP")
 
-// Submit implementa application.Submitter: envía el lote firmado con el
-// certificado TLS de cliente y parsea la respuesta.
+// Submit implements application.Submitter: it sends the batch signed with
+// the client TLS certificate and parses the answer.
 func (c *Client) Submit(ctx context.Context, soapXML string) (application.RespuestaLote, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader([]byte(soapXML)))
 	if err != nil {

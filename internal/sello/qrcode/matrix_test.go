@@ -1,6 +1,7 @@
 package qrcode
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -148,5 +149,16 @@ func TestVersionInfoBCH(t *testing.T) {
 		if vi>>12 != v {
 			t.Fatalf("versión %d: bits de versión incorrectos", v)
 		}
+	}
+}
+
+// TestEncodeRejectsPayloadOverTheCap: the QR input (the cotejo URL) has an
+// explicit size limit of 2000 bytes (audit network/input #7) — payloads
+// beyond it must be rejected before any matrix work.
+func TestEncodeRejectsPayloadOverTheCap(t *testing.T) {
+	if _, err := Encode(bytes.Repeat([]byte("a"), MaxInputBytes+1)); err == nil {
+		t.Fatal("QR payload over the 2000-byte cap was accepted")
+	} else if !strings.Contains(err.Error(), "2000") {
+		t.Fatalf("error does not mention the cap: %v", err)
 	}
 }

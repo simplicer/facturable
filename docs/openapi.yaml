@@ -39,11 +39,17 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
   /v1/records:
     get:
-      summary: Ledger rows (JSON or CSV)
+      summary: Ledger rows (paginated JSON or CSV)
       parameters:
         - name: format
           in: query
           schema: { type: string, enum: [json, csv], default: json }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: page-size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
         - name: from
           in: query
           schema: { type: string, pattern: 'DD-MM-AAAA' }
@@ -52,7 +58,7 @@ paths:
           schema: { type: string, pattern: 'DD-MM-AAAA' }
       responses:
         '200':
-          description: Ledger
+          description: One ledger page with pagination meta
           content:
             application/json:
               schema:
@@ -61,7 +67,14 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/LedgerRow' }
+                  meta:
+                    type: object
+                    properties:
+                      page: { type: integer, example: 1 }
+                      page_size: { type: integer, example: 50 }
+                      total: { type: integer, example: 3 }
             text/csv: { schema: { type: string } }
+        '422': { $ref: '#/components/responses/Problem' }
   /v1/records/{uuid}/pdf:
     get:
       summary: Stamped invoice PDF with QR and VERI*FACTU legend
@@ -74,13 +87,20 @@ paths:
         '200':
           description: PDF document
           content: { application/pdf: { schema: { type: string, format: binary } } }
-  /v1/invoices:
-    post:
-      summary: Quick one-screen invoice (five fields, agent fills the defaults)
+  /v1/invoices/{uuid}:
+    put:
+      summary: Quick one-screen invoice (idempotent creation with client UUID)
       description: |
-        Series is auto-numbered per taxpayer, date is today, type is F1,
-        regime S1; the fee is computed from base x rate in exact cents and the
-        record is stamped into the SHA-256 chain and queued for AEAT.
+        Zalando idempotent PUT creation: the client provides the UUID. Series
+        is auto-numbered per taxpayer, date is today, type is F1, regime S1;
+        the fee is computed from base x rate in exact cents and the record is
+        stamped into the SHA-256 chain and queued for AEAT. Same uuid + same
+        invoice replays 200; same uuid + a different invoice conflicts 409.
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
       requestBody:
         required: true
         content:
@@ -95,18 +115,40 @@ paths:
                 base: { type: string, example: "1000.00" }
                 iva: { type: string, default: "21", example: "21" }
       responses:
-        '200':
-          description: Stamped
+        '201':
+          description: Stamped under the client-provided UUID
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  sellada: { type: boolean }
-                  serie: { type: string }
-                  cuota: { type: string }
-                  total: { type: string }
+                  data:
+                    type: object
+                    properties:
+                      sellada: { type: boolean }
+                      uuid: { type: string, format: uuid }
+                      serie: { type: string }
+                      cuota: { type: string }
+                      total: { type: string }
+        '200':
+          description: Idempotent replay of the same invoice
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      sellada: { type: boolean }
+                      uuid: { type: string, format: uuid }
+                      serie: { type: string }
+                      cuota: { type: string }
+                      total: { type: string }
+                      reenviada: { type: boolean }
         '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /v1/invoices/{uuid}:duplicate:
     post:
       summary: Duplicate an issued invoice as a new one dated today
@@ -128,12 +170,15 @@ paths:
               schema:
                 type: object
                 properties:
-                  sellada: { type: boolean }
-                  serie: { type: string }
-                  fecha: { type: string }
-                  original: { type: string, format: uuid }
-                  cuota: { type: string }
-                  total: { type: string }
+                  data:
+                    type: object
+                    properties:
+                      sellada: { type: boolean }
+                      serie: { type: string }
+                      fecha: { type: string }
+                      original: { type: string, format: uuid }
+                      cuota: { type: string }
+                      total: { type: string }
         '400': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /v1/recurring:

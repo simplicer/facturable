@@ -1,15 +1,26 @@
 package qrcode
 
-// Matrix es el símbolo QR terminado: true = módulo oscuro.
+import "fmt"
+
+// MaxInputBytes caps the QR payload (the cotejo URL) at 2000 bytes, the QR
+// theoretical maximum (audit network/input #7). The encoder only supports
+// versions 1..10 — capacity well below this cap — but the explicit limit
+// documents the bound and rejects abuse before any matrix work.
+const MaxInputBytes = 2000
+
+// Matrix is the finished QR symbol: true = dark module.
 type Matrix struct {
 	Version int
 	Size    int
 	M       [][]bool
 }
 
-// Encode construye el símbolo QR completo para data (modo byte, nivel M,
-// versiones 1..10) eligiendo la máscara de menor penalización.
+// Encode builds the complete QR symbol for data (byte mode, level M,
+// versions 1..10) choosing the least-penalized mask.
 func Encode(data []byte) (*Matrix, error) {
+	if len(data) > MaxInputBytes {
+		return nil, fmt.Errorf("el contenido del QR (%d bytes) supera el máximo de %d bytes", len(data), MaxInputBytes)
+	}
 	version, cw, err := Codewords(data)
 	if err != nil {
 		return nil, err
@@ -50,10 +61,10 @@ func newMatrix(size int) [][]bool {
 	return m
 }
 
-// placeFunctions dibuja patrones de posición, separadores, alineación,
-// temporización, módulo oscuro y zonas reservadas de format/version info.
+// placeFunctions draws the finder patterns, separators, alignment,
+// timing, dark module and the reserved format/version info areas.
 func placeFunctions(m, reservado [][]bool, version, size int) {
-	// patrones de posición + separadores
+	// finder patterns + separators
 	ponerFinder := func(row, col int) {
 		for dr := -1; dr <= 7; dr++ {
 			for dc := -1; dc <= 7; dc++ {
@@ -73,7 +84,7 @@ func placeFunctions(m, reservado [][]bool, version, size int) {
 	ponerFinder(0, size-7)
 	ponerFinder(size-7, 0)
 
-	// temporización (row 6 y columna 6)
+	// timing (row 6 and column 6)
 	for i := 8; i < size-8; i++ {
 		oscuro := i%2 == 0
 		m[6][i] = oscuro
@@ -82,7 +93,7 @@ func placeFunctions(m, reservado [][]bool, version, size int) {
 		reservado[i][6] = true
 	}
 
-	// alineación
+	// alignment
 	if centros, ok := alignmentCenters[version]; ok {
 		for _, r := range centros {
 			for _, c := range centros {
@@ -101,10 +112,10 @@ func placeFunctions(m, reservado [][]bool, version, size int) {
 		}
 	}
 
-	// reserva EXACTA de format info (15 bits en dos copias + módulo oscuro):
-	// columna 8: filas 0..8 (bits 0..7 y timing) y filas size-7..size-1
-	// (bits 8..14); el módulo oscuro ocupa (size-8, 8).
-	// row 8: templateColumns 0..8 y templateColumns size-8..size-1.
+	// EXACT reservation of format info (15 bits in two copies + dark module):
+	// column 8: rows 0..8 (bits 0..7 and timing) and rows size-7..size-1
+	// (bits 8..14); the dark module sits at (size-8, 8).
+	// row 8: columns 0..8 and columns size-8..size-1.
 	for i := 0; i <= 8; i++ {
 		reservado[8][i] = true
 		reservado[i][8] = true
@@ -136,7 +147,7 @@ func placeData(m, reservado [][]bool, cw []byte, size int) {
 	down := true
 	for col := size - 1; col > 0; col -= 2 {
 		if col == 6 {
-			col = 5 // salta la columna de temporización
+			col = 5 // skip the timing column
 		}
 		for i := 0; i < size; i++ {
 			var row int
@@ -159,7 +170,7 @@ func placeData(m, reservado [][]bool, cw []byte, size int) {
 	}
 }
 
-// applyMask aplica la máscara mask a los módulos de datos.
+// applyMask applies the given mask to the data modules.
 func applyMask(m, reservado [][]bool, mask, size int) {
 	for r := 0; r < size; r++ {
 		for c := 0; c < size; c++ {
@@ -194,14 +205,14 @@ func maskBit(mask, r, c int) bool {
 	}
 }
 
-// placeFormatInfo escribe los 15 bits (dos copias) para nivel M + máscara:
+// placeFormatInfo writes the 15 bits (two copies) for level M + mask:
 //
-//	vertical (columna 8): bits 0..5 en filas 0..5, bits 6..7 en filas 7..8,
-//	  bits 8..14 en filas size-7..size-1 (LSB arriba).
-//	horizontal (row 8): bits 0..7 en templateColumns size-1..size-8, bit 8 en
-//	  columna 7, bits 9..14 en templateColumns 5..0 (LSB a la derecha).
+//	vertical (column 8): bits 0..5 in rows 0..5, bits 6..7 in rows 7..8,
+//	  bits 8..14 in rows size-7..size-1 (LSB on top).
+//	horizontal (row 8): bits 0..7 in columns size-1..size-8, bit 8 in
+//	  column 7, bits 9..14 in columns 5..0 (LSB on the right).
 //
-// Más el módulo oscuro fijo en (size-8, 8).
+// Plus the fixed dark module at (size-8, 8).
 func placeFormatInfo(m [][]bool, mask, size int) {
 	fi := formatInfo(mask)
 	bit := func(i int) bool { return fi&(1<<uint(i)) != 0 }
@@ -223,10 +234,10 @@ func placeFormatInfo(m [][]bool, mask, size int) {
 		m[8][14-i] = bit(i)
 	}
 
-	m[size-8][8] = true // módulo oscuro
+	m[size-8][8] = true // dark module
 }
 
-// formatInfo calcula los 15 bits para nivel M (00) y máscara dada.
+// formatInfo computes the 15 bits for level M (00) and the given mask.
 func formatInfo(mask int) int {
 	data := 0b00000 | mask // M = 00 en los dos bits altos
 	fi := data << 10
@@ -260,13 +271,13 @@ func versionInfo(version int) int {
 	return version<<12 | vi
 }
 
-// ---- penalización ISO 18004 (para elegir máscara) ----
+// ---- ISO 18004 penalty (mask selection) ----
 
 func penalty(m [][]bool) int {
 	size := len(m)
 	p := 0
 
-	// regla 1: 5+ módulos iguales seguidos en filas/templateColumns
+	// rule 1: 5+ consecutive equal modules in rows/columns
 	for i := 0; i < size; i++ {
 		p += runs(m, i, true)
 		p += runs(m, i, false)
@@ -317,7 +328,7 @@ func penalty(m [][]bool) int {
 		}
 	}
 
-	// regla 4: proporción de oscuros
+	// rule 4: dark proportion
 	oscuras := 0
 	for r := 0; r < size; r++ {
 		for c := 0; c < size; c++ {
@@ -327,8 +338,8 @@ func penalty(m [][]bool) int {
 		}
 	}
 	total := size * size
-	// regla 4 con aritmética en coma flotante, como el cálculo de
-	// referencia: int(abs(porcentaje*100 - 50) / 5) * 10
+	// rule 4 with floating point arithmetic, like the reference
+	// computation: int(abs(percentage*100 - 50) / 5) * 10
 	porcentaje := float64(oscuras) * 100 / float64(total)
 	p += int(absF(porcentaje-50)/5) * 10
 	return p

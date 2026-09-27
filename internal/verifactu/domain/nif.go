@@ -142,7 +142,7 @@ func validateCIF(value string) error {
 		if given != wantDigit {
 			return fmt.Errorf("el CIF %q no es válido: el dígito de control debería ser %c", value, wantDigit)
 		}
-	case 'N', 'P', 'Q', 'R', 'S', 'W': // entidades públicas y sin ánimo de lucro: the control must be the letter.
+	case 'N', 'P', 'Q', 'R', 'S', 'W': // public entities and non-profits: the control must be a letter.
 		if given != wantLetter {
 			return fmt.Errorf("el CIF %q no es válido: el carácter de control debería ser %c", value, wantLetter)
 		}

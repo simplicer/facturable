@@ -72,8 +72,8 @@ func TestQuickInvoiceFromXML(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := quickInvoiceFromXML(tc.xml); got != tc.want {
-				t.Fatalf("quickInvoiceFromXML() = %+v, want %+v", got, tc.want)
+			if got := QuickInvoiceFromXML(tc.xml); got != tc.want {
+				t.Fatalf("QuickInvoiceFromXML() = %+v, want %+v", got, tc.want)
 			}
 		})
 	}

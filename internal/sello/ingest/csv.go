@@ -32,6 +32,9 @@ type BreakdownDraft struct {
 // Draft is a validated invoice ready to stamp: the JSON wire format for
 // the relay/API ingestion and the internal shape of grouped CSV rows.
 type Draft struct {
+	// UUID is the client-provided identifier of the record (Zalando: PUT
+	// idempotent creation); empty means the ledger mints one on Append.
+	UUID        string           `json:"uuid,omitempty"`
 	Series      string           `json:"numero_serie"`
 	Date        string           `json:"fecha"` // DD-MM-AAAA
 	Tipo        string           `json:"tipo"`  // F1, R1…

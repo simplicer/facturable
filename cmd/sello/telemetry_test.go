@@ -127,23 +127,25 @@ func TestTelemetryStatusAnswersOptIn(t *testing.T) {
 	rec := httptest.NewRecorder()
 	telemetryStatus(&optIn)(rec, httptest.NewRequest(http.MethodGet, "/v1/telemetry/status", nil))
 
-	var out map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("response is not JSON: %v", err)
+	var out struct {
+		Data map[string]any `json:"data"`
 	}
-	if out["optin"] != false {
-		t.Errorf("optin = %v, want false", out["optin"])
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("response is not enveloped JSON: %v", err)
+	}
+	if out.Data["optin"] != false {
+		t.Errorf("optin = %v, want false", out.Data["optin"])
 	}
 
 	optIn.Store(true)
 	rec2 := httptest.NewRecorder()
 	telemetryStatus(&optIn)(rec2, httptest.NewRequest(http.MethodGet, "/v1/telemetry/status", nil))
-	out = nil
+	out.Data = nil
 	if err := json.Unmarshal(rec2.Body.Bytes(), &out); err != nil {
-		t.Fatalf("response is not JSON: %v", err)
+		t.Fatalf("response is not enveloped JSON: %v", err)
 	}
-	if out["optin"] != true {
-		t.Errorf("optin = %v, want true", out["optin"])
+	if out.Data["optin"] != true {
+		t.Errorf("optin = %v, want true", out.Data["optin"])
 	}
 }
 

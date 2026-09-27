@@ -144,18 +144,20 @@ func TestCheckConnectivity(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want %d (body: %s)", rec.Code, http.StatusOK, rec.Body.String())
 		}
-		var out map[string]any
+		var out struct {
+			Data map[string]any `json:"data"`
+		}
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-			t.Fatalf("response is not JSON: %v", err)
+			t.Fatalf("response is not enveloped JSON: %v", err)
 		}
-		if out["certificado"] != "no configurado (modo simulado)" {
-			t.Errorf("certificado = %v, want %q", out["certificado"], "no configurado (modo simulado)")
+		if out.Data["certificado"] != "no configurado (modo simulado)" {
+			t.Errorf("certificado = %v, want %q", out.Data["certificado"], "no configurado (modo simulado)")
 		}
-		if out["aeat_pruebas"] != "ok" {
-			t.Errorf("aeat_pruebas = %v, want %q", out["aeat_pruebas"], "ok")
+		if out.Data["aeat_pruebas"] != "ok" {
+			t.Errorf("aeat_pruebas = %v, want %q", out.Data["aeat_pruebas"], "ok")
 		}
-		if _, has := out["aviso"]; has {
-			t.Errorf("aviso = %v, want no warning without a certificate", out["aviso"])
+		if _, has := out.Data["aviso"]; has {
+			t.Errorf("aviso = %v, want no warning without a certificate", out.Data["aviso"])
 		}
 	})
 
@@ -170,19 +172,21 @@ func TestCheckConnectivity(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want %d (body: %s)", rec.Code, http.StatusOK, rec.Body.String())
 		}
-		var out map[string]any
+		var out struct {
+			Data map[string]any `json:"data"`
+		}
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-			t.Fatalf("response is not JSON: %v", err)
+			t.Fatalf("response is not enveloped JSON: %v", err)
 		}
-		if out["certificado"] != "ok" {
-			t.Errorf("certificado = %v, want %q", out["certificado"], "ok")
+		if out.Data["certificado"] != "ok" {
+			t.Errorf("certificado = %v, want %q", out.Data["certificado"], "ok")
 		}
-		aviso, _ := out["aviso"].(string)
+		aviso, _ := out.Data["aviso"].(string)
 		if !strings.Contains(aviso, "Renuévalo en la FNMT") {
 			t.Errorf("aviso = %q, want the FNMT renewal warning", aviso)
 		}
-		if out["aeat_pruebas"] != "error: dial boom" {
-			t.Errorf("aeat_pruebas = %v, want %q", out["aeat_pruebas"], "error: dial boom")
+		if out.Data["aeat_pruebas"] != "error: dial boom" {
+			t.Errorf("aeat_pruebas = %v, want %q", out.Data["aeat_pruebas"], "error: dial boom")
 		}
 	})
 }

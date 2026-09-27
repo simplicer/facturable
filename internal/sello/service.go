@@ -12,7 +12,7 @@ import (
 	"facturable/internal/verifactu/application"
 )
 
-// Service orquesta el ciclo completo del agente.
+// Service orchestrates the full agent cycle.
 type Service struct {
 	Store     *persistence.Store
 	Submitter application.Submitter
@@ -45,13 +45,13 @@ func (s *Service) licenseCheck() (bool, string) {
 	return s.LicenseCheck()
 }
 
-// IngestResult resume una ingesta de CSV.
+// IngestResult resumes one CSV ingestion.
 type IngestResult struct {
 	Sellados int               `json:"sellados"`
 	Errores  []ingest.RowError `json:"errores,omitempty"`
 }
 
-// IngestCSV valida, sella y guarda un CSV de facturas.
+// IngestCSV validates, stamps and stores an invoice CSV.
 func (s *Service) IngestCSV(r io.Reader) (*IngestResult, error) {
 	borradores, errores := ingest.ReadCSV(r)
 	res := &IngestResult{Errores: errores}
@@ -87,7 +87,7 @@ func (s *Service) IngestCSV(r io.Reader) (*IngestResult, error) {
 			EnlaceSerie: sellado.EnlaceSerie, EnlaceFecha: sellado.EnlaceFecha,
 			EnlaceHuella: sellado.EnlaceHuella, ClientNIF: b.ClientNIF,
 		}); err != nil {
-			return res, fmt.Errorf("no se pudo storeRow %s: %w", sellado.Serie, err)
+			return res, fmt.Errorf("%w: no se pudo guardar el registro %s: %v", persistence.ErrInternal, sellado.Serie, err)
 		}
 		// automatic client memory: best-effort, the fiscal record is
 		// already saved and must not be reported as failed because of it
@@ -101,7 +101,7 @@ func (s *Service) IngestCSV(r io.Reader) (*IngestResult, error) {
 func (s *Service) IngestDrafts(drafts []ingest.Draft) (*IngestResult, error) {
 	res := &IngestResult{}
 	for i, d := range drafts {
-		// idempotencia relay/API: serie ya sellada → aviso, no doble sello
+		// relay/API idempotency: already-stamped series is reported, never double-stamped
 		if dup, err := s.Store.HasSeries(s.EmisorNIF, d.Series); err == nil && dup {
 			res.Errores = append(res.Errores, ingest.RowError{
 				Fila: i + 1, Campo: "numero_serie",
@@ -129,13 +129,14 @@ func (s *Service) IngestDrafts(drafts []ingest.Draft) (*IngestResult, error) {
 			continue
 		}
 		if _, err := s.Store.Append(persistence.StoredRecord{
-			NIF: sellado.NIF, Serie: sellado.Serie, Date: sellado.Date, Tipo: sellado.Tipo,
+			UUID: d.UUID,
+			NIF:  sellado.NIF, Serie: sellado.Serie, Date: sellado.Date, Tipo: sellado.Tipo,
 			Generado: sellado.Generado, Cuota: sellado.Cuota, Importe: sellado.Importe,
 			Huella: sellado.Huella, XML: sellado.XML,
 			EnlaceSerie: sellado.EnlaceSerie, EnlaceFecha: sellado.EnlaceFecha,
 			EnlaceHuella: sellado.EnlaceHuella, ClientNIF: d.ClientNIF,
 		}); err != nil {
-			return res, fmt.Errorf("could not store %s: %w", sellado.Serie, err)
+			return res, fmt.Errorf("%w: no se pudo guardar el registro %s: %v", persistence.ErrInternal, sellado.Serie, err)
 		}
 		// automatic client memory: best-effort, the fiscal record is
 		// already saved and must not be reported as failed because of it
@@ -148,7 +149,8 @@ func (s *Service) IngestDrafts(drafts []ingest.Draft) (*IngestResult, error) {
 func (s *Service) chainState() (application.ChainState, error) {
 	series, fecha, huella, enlS, enlF, enlH, ok, err := s.Store.Last(s.EmisorNIF)
 	if err != nil {
-		return application.ChainState{}, err
+		// persistence detail stays server-side (audit #8)
+		return application.ChainState{}, fmt.Errorf("%w: %v", persistence.ErrInternal, err)
 	}
 	if !ok {
 		return application.ChainState{}, nil
@@ -161,7 +163,7 @@ func (s *Service) chainState() (application.ChainState, error) {
 	}
 	aS, aF, aH, aOk, err := s.Store.Previous(s.EmisorNIF)
 	if err != nil {
-		return estado, err
+		return estado, fmt.Errorf("%w: %v", persistence.ErrInternal, err)
 	}
 	if aOk {
 		estado.Previous = &application.ChainLink{Serie: aS, Date: aF, Huella: aH}

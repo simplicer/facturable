@@ -22,7 +22,8 @@ func (s *Service) SubmitPending(ctx context.Context) (int, error) {
 	}
 	pendientes, err := s.Store.Pending(s.EmisorNIF, 1000)
 	if err != nil {
-		return 0, err
+		// persistence detail stays server-side (audit #8)
+		return 0, fmt.Errorf("%w: %v", persistence.ErrInternal, err)
 	}
 	if len(pendientes) == 0 {
 		return 0, nil
@@ -60,9 +61,13 @@ func (s *Service) SubmitPending(ctx context.Context) (int, error) {
 func (s *Service) recordResponse(p persistence.PendingRecord, lote application.RespuestaLote) error {
 	linea := lineFor(p, lote)
 	if linea == nil {
-		return s.Store.RecordSubmission(persistence.StoredSubmission{
+		if err := s.Store.RecordSubmission(persistence.StoredSubmission{
 			RegistroID: p.ID, Estado: "rechazado",
-			Detalle: "la AEAT no devolvió el veredicto de este registro"})
+			Detalle: "la AEAT no devolvió el veredicto de este registro",
+		}); err != nil {
+			return fmt.Errorf("%w: %v", persistence.ErrInternal, err)
+		}
+		return nil
 	}
 	estado := map[string]string{
 		"Correcto": "correcto", "AceptadoConErrores": "aceptado_errores", "Incorrecto": "rechazado",
@@ -75,9 +80,13 @@ func (s *Service) recordResponse(p persistence.PendingRecord, lote application.R
 		info := domain.ClasificarError(linea.CodigoError)
 		detalle = fmt.Sprintf("%s — %s", info.Description, info.Accion)
 	}
-	return s.Store.RecordSubmission(persistence.StoredSubmission{
+	if err := s.Store.RecordSubmission(persistence.StoredSubmission{
 		RegistroID: p.ID, Estado: estado, CSV: lote.CSV,
-		Codigo: linea.CodigoError, Detalle: detalle})
+		Codigo: linea.CodigoError, Detalle: detalle,
+	}); err != nil {
+		return fmt.Errorf("%w: %v", persistence.ErrInternal, err)
+	}
+	return nil
 }
 
 func lineFor(p persistence.PendingRecord, lote application.RespuestaLote) *application.RespuestaLinea {

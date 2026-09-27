@@ -1,11 +1,13 @@
 package sello
 
 import (
+	"fmt"
+
 	"facturable/internal/sello/persistence"
 	"facturable/internal/verifactu/application"
 )
 
-// Cancel genera y guarda el chainRow de anulación de una factura.
+// Cancel generates and stores the cancellation chainRow of an invoice.
 func (s *Service) Cancel(series, fecha string) (int64, error) {
 	estado, err := s.chainState()
 	if err != nil {
@@ -21,5 +23,9 @@ func (s *Service) Cancel(series, fecha string) (int64, error) {
 		Huella: res.Huella, XML: res.XML,
 		EnlaceSerie: res.EnlaceSerie, EnlaceFecha: res.EnlaceFecha, EnlaceHuella: res.EnlaceHuella,
 	})
-	return id, err
+	if err != nil {
+		// persistence detail stays server-side (audit #8)
+		return 0, fmt.Errorf("%w: %v", persistence.ErrInternal, err)
+	}
+	return id, nil
 }

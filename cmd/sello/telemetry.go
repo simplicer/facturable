@@ -31,7 +31,7 @@ func telemetryOptIn(configPath string, optIn *atomic.Bool) http.HandlerFunc {
 			return
 		}
 		optIn.Store(req.Enabled)
-		writeJSON(w, map[string]any{"optin": req.Enabled})
+		writeJSON(w, map[string]any{"data": map[string]any{"optin": req.Enabled}})
 	}
 }
 
@@ -39,6 +39,6 @@ func telemetryOptIn(configPath string, optIn *atomic.Bool) http.HandlerFunc {
 // can render the current state of the footer toggle.
 func telemetryStatus(optIn *atomic.Bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, map[string]any{"optin": optIn.Load()})
+		writeJSON(w, map[string]any{"data": map[string]any{"optin": optIn.Load()}})
 	}
 }
