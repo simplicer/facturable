@@ -6,6 +6,8 @@ info:
     Local agent API (sello, 127.0.0.1) and public API (licenses, relay,
     payments). Resource-oriented per Zalando guidelines; idempotent creation
     with client-supplied UUIDs; errors follow RFC 9457 problem+json.
+    When SELLO_PIN is configured, agent routes under /v1/ require
+    `Authorization: Bearer <SELLO_PIN>`.
 servers:
   - url: http://127.0.0.1:8787
     description: Local agent
@@ -72,6 +74,248 @@ paths:
         '200':
           description: PDF document
           content: { application/pdf: { schema: { type: string, format: binary } } }
+  /v1/invoices:
+    post:
+      summary: Quick one-screen invoice (five fields, agent fills the defaults)
+      description: |
+        Series is auto-numbered per taxpayer, date is today, type is F1,
+        regime S1; the fee is computed from base x rate in exact cents and the
+        record is stamped into the SHA-256 chain and queued for AEAT.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cliente, concepto, base]
+              properties:
+                cliente: { type: string, description: Client name }
+                nif: { type: string, description: Client NIF }
+                concepto: { type: string, description: Concept }
+                base: { type: string, example: "1000.00" }
+                iva: { type: string, default: "21", example: "21" }
+      responses:
+        '200':
+          description: Stamped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sellada: { type: boolean }
+                  serie: { type: string }
+                  cuota: { type: string }
+                  total: { type: string }
+        '400': { $ref: '#/components/responses/Problem' }
+  /v1/invoices/{uuid}:duplicate:
+    post:
+      summary: Duplicate an issued invoice as a new one dated today
+      description: |
+        Custom method (:action, Zalando exception): copies the source record's
+        fiscal fields (client, concept, base, rate), assigns the next series
+        number and today's date, and stamps it through the standard ingest
+        pipeline.
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Duplicated and stamped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sellada: { type: boolean }
+                  serie: { type: string }
+                  fecha: { type: string }
+                  original: { type: string, format: uuid }
+                  cuota: { type: string }
+                  total: { type: string }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /v1/recurring:
+    post:
+      summary: Stamp a batch of fixed monthly invoices (recurring clients)
+      description: |
+        Accepts the recurring clients with their fixed amounts; every entry
+        goes through the same quick-invoice pipeline in sequence and the
+        response summarizes stamps and per-entry errors.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                required: [cliente, concepto, base]
+                properties:
+                  cliente: { type: string }
+                  nif: { type: string }
+                  concepto: { type: string }
+                  base: { type: string, example: "1000.00" }
+                  iva: { type: string, default: "21" }
+      responses:
+        '200':
+          description: Batch summary (one line per client, in order)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  selladas: { type: integer }
+                  fallidas: { type: integer }
+                  facturas:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        cliente: { type: string }
+                        serie: { type: string }
+                        error: { type: string }
+        '400': { $ref: '#/components/responses/Problem' }
+  /v1/cancellations:
+    post:
+      summary: Cancel an issued invoice (chained cancellation record)
+      description: |
+        Corrections never delete: a cancellation record (RegistroAnulacion) is
+        appended to the same SHA-256 chain and remitted to the AEAT like any
+        other record.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serie, fecha]
+              properties:
+                serie: { type: string }
+                fecha: { type: string, pattern: 'DD-MM-AAAA' }
+      responses:
+        '200':
+          description: Cancellation record appended to the chain (queued for AEAT)
+          content:
+            application/json:
+              schema: { type: object }
+        '400': { $ref: '#/components/responses/Problem' }
+  /v1/stamps:
+    post:
+      summary: Stamp the ORIGINAL invoice PDF produced by your own program
+      description: |
+        Post-processor mode: upload the PDF your program already issued plus
+        the confirmed fiscal fields; the record enters the chain and YOUR
+        document comes back stamped with the VERI*FACTU QR and legend (stamp,
+        don't recreate). PDF up to 30 MB.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [invoice, base]
+              properties:
+                invoice: { type: string, format: binary, description: Original invoice PDF }
+                cliente: { type: string }
+                nif: { type: string }
+                concepto: { type: string, default: "Factura sello directo" }
+                base: { type: string, description: Total taxable base, example: "1000.00" }
+                iva: { type: string, default: "21" }
+      responses:
+        '200':
+          description: Original PDF stamped with QR and legend
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/Problem' }
+  /v1/extract:
+    post:
+      summary: Pre-extract fiscal fields from an invoice PDF for confirmation
+      description: |
+        Text-based PDFs parse directly; scanned ones fall back to tesseract
+        OCR when available. Fields come back for the user to confirm —
+        extraction may be partial (completo=false).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [invoice]
+              properties:
+                invoice: { type: string, format: binary, description: Invoice PDF (text or scanned) }
+      responses:
+        '200':
+          description: Extracted fields
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  method: { type: string, enum: [text, ocr] }
+                  campos:
+                    type: object
+                    properties:
+                      nif: { type: string }
+                      base: { type: string }
+                      cuota: { type: string }
+                      serie: { type: string }
+                      fecha: { type: string }
+                  completo: { type: boolean }
+                  texto: { type: string, description: First 2000 chars of extracted text (partial extraction only) }
+                  nota: { type: string }
+        '400': { $ref: '#/components/responses/Problem' }
+  /v1/emails:
+    post:
+      summary: Email the stamped invoice PDF to the client
+      description: |
+        Renders the record's PDF with QR and sends it through the agent's own
+        SMTP configuration (SELLO_SMTP_HOST required).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [record_uuid, to]
+              properties:
+                record_uuid: { type: string, format: uuid }
+                to: { type: string, format: email }
+      responses:
+        '200':
+          description: Sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enviado: { type: boolean }
+                  to: { type: string }
+        '400': { $ref: '#/components/responses/Problem' }
+  /v1/clients:
+    get:
+      summary: Frequent clients for form auto-fill (ordered by usage frequency)
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, default: 10 }
+      responses:
+        '200':
+          description: Most frequent clients
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        nif: { type: string }
+                        nombre: { type: string }
   /v1/submissions:
     post:
       summary: Submit one batch of pending records to AEAT

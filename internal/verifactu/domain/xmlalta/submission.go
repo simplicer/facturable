@@ -201,8 +201,12 @@ func SplitRecordBlocks(soapXML string) []string {
 }
 
 // BatchFromBlocks assembles a fresh SOAP envelope from raw record blocks
-// (as returned by SplitRecordBlocks) for one obligado tributario.
+// (as returned by SplitRecordBlocks) for one obligado tributario. Every
+// block is checked for the mandatory <sum1:IDVersion> and <sum1:Huella>
+// elements before concatenation, so a corrupted block is reported instead
+// of being remitted to the AEAT.
 func BatchFromBlocks(issuerName, issuerNIF string, blocks []string) (string, error) {
+	const open, close = "<sum:RegistroFactura>", "</sum:RegistroFactura>"
 	var buf bytes.Buffer
 	buf.WriteString(xml.Header)
 	buf.WriteString(`<soapenv:Envelope xmlns:soapenv="` + NamespaceSOAPEnvelope + `" xmlns:sum="` + NamespaceSuministroLR + `" xmlns:sum1="` + NamespaceSuministroInfo + `" xmlns:xd="` + NamespaceXMLDSig + `">`)
@@ -211,10 +215,23 @@ func BatchFromBlocks(issuerName, issuerNIF string, blocks []string) (string, err
 	buf.WriteString("</sum1:NombreRazon><sum1:NIF>")
 	buf.WriteString(xmlEscapeText(issuerNIF))
 	buf.WriteString("</sum1:NIF></sum1:ObligadoEmision></sum:Cabecera>")
-	for _, b := range blocks {
-		buf.WriteString("<sum:RegistroFactura>")
-		buf.WriteString(b[len("<sum:RegistroFactura>") : len(b)-len("</sum:RegistroFactura>")])
-		buf.WriteString("</sum:RegistroFactura>")
+	for i, b := range blocks {
+		if !strings.HasPrefix(b, open) || !strings.HasSuffix(b, close) {
+			return "", fmt.Errorf("bloque de registro %d corrupto: no está envuelto en %s", i+1, open)
+		}
+		var missing []string
+		if !strings.Contains(b, "<sum1:IDVersion>") {
+			missing = append(missing, "sum1:IDVersion")
+		}
+		if !strings.Contains(b, "<sum1:Huella>") {
+			missing = append(missing, "sum1:Huella")
+		}
+		if len(missing) > 0 {
+			return "", fmt.Errorf("bloque de registro %d corrupto: falta %s", i+1, strings.Join(missing, " y "))
+		}
+		buf.WriteString(open)
+		buf.WriteString(b[len(open) : len(b)-len(close)])
+		buf.WriteString(close)
 	}
 	buf.WriteString("</sum:RegFactuSistemaFacturacion></soapenv:Body></soapenv:Envelope>")
 	return buf.String(), nil

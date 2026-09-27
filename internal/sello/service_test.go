@@ -152,6 +152,48 @@ func TestCircuitoIngestaConErroresNoRompeLibro(t *testing.T) {
 	}
 }
 
+// La memoria de clientes se alimenta sola: cada registro sellado con
+// NIF+nombre de cliente (por CSV o por borrador) queda recordado, y los
+// registros sin cliente no ensucian la memoria.
+func TestIngestAlimentaMemoriaClientes(t *testing.T) {
+	srv, _, _, _ := newTestService(t)
+	if _, err := srv.IngestCSV(strings.NewReader(csvPrueba)); err != nil {
+		t.Fatalf("IngestCSV(): %v", err)
+	}
+	conCliente, err := srv.IngestDrafts([]ingest.Draft{{
+		Series: "DRA-0001", Date: "06-01-2027", Tipo: "F1", Description: "obra",
+		ClientNIF: "12345678Z", ClientName: "Juan Pérez",
+		Breakdowns: []ingest.BreakdownDraft{{TaxRate: "21", Base: "10.00", Fee: "2.10"}},
+	}})
+	if err != nil || conCliente.Sellados != 1 {
+		t.Fatalf("IngestDrafts() = %+v %v", conCliente, err)
+	}
+	sinCliente, err := srv.IngestDrafts([]ingest.Draft{{
+		Series: "DRA-0002", Date: "06-01-2027", Tipo: "F1", Description: "obra",
+		Breakdowns: []ingest.BreakdownDraft{{TaxRate: "21", Base: "10.00", Fee: "2.10"}},
+	}})
+	if err != nil || sinCliente.Sellados != 1 {
+		t.Fatalf("IngestDrafts() sin cliente = %+v %v", sinCliente, err)
+	}
+
+	got, err := srv.Store.FrequentClients(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []persistence.FrequentClient{
+		{NIF: "B44531218", Nombre: "ACME SL", Usos: 2},
+		{NIF: "12345678Z", Nombre: "Juan Pérez", Usos: 1},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("FrequentClients = %+v (want %+v)", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("FrequentClients[%d] = %+v (want %+v)", i, got[i], want[i])
+		}
+	}
+}
+
 func TestIngestDraftsDedupePorSerie(t *testing.T) {
 	srv, _, _, _ := newTestService(t)
 	d := []ingest.Draft{{

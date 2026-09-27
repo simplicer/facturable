@@ -14,6 +14,9 @@ import (
 // envelope, one taxpayer per batch: AEAT spec §6.4.4.1), honoring the flow
 // control between submissions and recording the per-record response.
 func (s *Service) SubmitPending(ctx context.Context) (int, error) {
+	if ok, motivo := s.licenseCheck(); !ok {
+		return 0, fmt.Errorf("remisión bloqueada por la licencia: %s", motivo)
+	}
 	if !s.Flujo.PuedeEnviar(1000) {
 		return 0, nil
 	}

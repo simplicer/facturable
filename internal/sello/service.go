@@ -22,6 +22,10 @@ type Service struct {
 	Sistema                 application.SystemInfo
 	// Now is injected so tests control time; nil means UTC wall clock.
 	Now func() time.Time
+	// LicenseCheck is the optional license gate for submissions; nil keeps
+	// the unlicensed development mode open. The agent wires the signature
+	// verification of LICENSE_TOKEN here.
+	LicenseCheck func() (bool, string)
 }
 
 // clock returns the injected clock or UTC wall time.
@@ -30,6 +34,15 @@ func (s *Service) clock() time.Time {
 		return s.Now()
 	}
 	return time.Now().UTC()
+}
+
+// licenseCheck applies the optional license gate; no gate configured
+// means allowed (development without licenses).
+func (s *Service) licenseCheck() (bool, string) {
+	if s.LicenseCheck == nil {
+		return true, ""
+	}
+	return s.LicenseCheck()
 }
 
 // IngestResult resume una ingesta de CSV.
@@ -72,10 +85,13 @@ func (s *Service) IngestCSV(r io.Reader) (*IngestResult, error) {
 			Cuota: sellado.Cuota, Importe: sellado.Importe,
 			Huella: sellado.Huella, XML: sellado.XML,
 			EnlaceSerie: sellado.EnlaceSerie, EnlaceFecha: sellado.EnlaceFecha,
-			EnlaceHuella: sellado.EnlaceHuella,
+			EnlaceHuella: sellado.EnlaceHuella, ClientNIF: b.ClientNIF,
 		}); err != nil {
 			return res, fmt.Errorf("no se pudo storeRow %s: %w", sellado.Serie, err)
 		}
+		// automatic client memory: best-effort, the fiscal record is
+		// already saved and must not be reported as failed because of it
+		_ = s.Store.UpsertClient(b.ClientNIF, b.ClientName)
 		res.Sellados++
 	}
 	return res, nil
@@ -117,10 +133,13 @@ func (s *Service) IngestDrafts(drafts []ingest.Draft) (*IngestResult, error) {
 			Generado: sellado.Generado, Cuota: sellado.Cuota, Importe: sellado.Importe,
 			Huella: sellado.Huella, XML: sellado.XML,
 			EnlaceSerie: sellado.EnlaceSerie, EnlaceFecha: sellado.EnlaceFecha,
-			EnlaceHuella: sellado.EnlaceHuella,
+			EnlaceHuella: sellado.EnlaceHuella, ClientNIF: d.ClientNIF,
 		}); err != nil {
 			return res, fmt.Errorf("could not store %s: %w", sellado.Serie, err)
 		}
+		// automatic client memory: best-effort, the fiscal record is
+		// already saved and must not be reported as failed because of it
+		_ = s.Store.UpsertClient(d.ClientNIF, d.ClientName)
 		res.Sellados++
 	}
 	return res, nil
@@ -148,6 +167,16 @@ func (s *Service) chainState() (application.ChainState, error) {
 		estado.Previous = &application.ChainLink{Serie: aS, Date: aF, Huella: aH}
 	}
 	return estado, nil
+}
+
+// lastSeries returns the series of the taxpayer's newest ledger record
+// (empty when the chain has none): the seed for the next series number.
+func (s *Service) lastSeries() string {
+	series, _, _, _, _, _, ok, err := s.Store.Last(s.EmisorNIF)
+	if err != nil || !ok {
+		return ""
+	}
+	return series
 }
 
 func toBreakdowns(ds []ingest.BreakdownDraft) []application.BreakdownDraft {

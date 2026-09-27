@@ -70,12 +70,17 @@ BEGIN SELECT RAISE(ABORT, 'los registros de facturación son inmutables'); END;
 CREATE TRIGGER IF NOT EXISTS registros_inmutables_delete
 BEFORE DELETE ON registros
 BEGIN SELECT RAISE(ABORT, 'los registros de facturación son inmutables'); END;
-CREATE TABLE IF NOT EXISTS ingest_batches(
-  uuid TEXT PRIMARY KEY,
-  body_hash TEXT NOT NULL,
-  response TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
+	CREATE TABLE IF NOT EXISTS ingest_batches(
+	  uuid TEXT PRIMARY KEY,
+	  body_hash TEXT NOT NULL,
+	  response TEXT NOT NULL,
+	  created_at TEXT NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS clientes(
+	  nif TEXT PRIMARY KEY,
+	  nombre TEXT,
+	  created_at TEXT NOT NULL
+	);
 CREATE TABLE IF NOT EXISTS remisiones(
   registro_id INTEGER NOT NULL REFERENCES registros(id),
   intento INTEGER NOT NULL,
@@ -91,6 +96,9 @@ CREATE INDEX IF NOT EXISTS idx_registros_orden ON registros(nif, id);`); err != 
 	}
 	// soft migration for ledgers created before record UUIDs existed
 	_, _ = s.db.Exec(`ALTER TABLE registros ADD COLUMN uuid TEXT`)
+	// soft migration: which client each record bills (feeds the automatic
+	// client memory; older rows stay NULL and simply rank as unused)
+	_, _ = s.db.Exec(`ALTER TABLE registros ADD COLUMN cliente_nif TEXT`)
 	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_registros_uuid ON registros(uuid) WHERE uuid IS NOT NULL`); err != nil {
 		// index already exists
 		_ = err
@@ -104,6 +112,7 @@ type StoredRecord struct {
 	NIF, Serie, Date, Tipo, Generado       string
 	Cuota, Importe, Huella, XML            string
 	EnlaceSerie, EnlaceFecha, EnlaceHuella string // vacíos si es el primero
+	ClientNIF                              string // destinatario, vacío si no consta
 }
 
 // Append añade un chainRow al libro (append-only).
@@ -112,11 +121,11 @@ func (s *Store) Append(r StoredRecord) (int64, error) {
 		r.UUID = uuid.NewString()
 	}
 	res, err := s.db.Exec(`INSERT INTO registros
-(uuid, nif, series, fecha, tipo, generado, cuota, importe, huella, enlace_serie, enlace_fecha, enlace_huella, xml, creado_en)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+(uuid, nif, series, fecha, tipo, generado, cuota, importe, huella, enlace_serie, enlace_fecha, enlace_huella, xml, creado_en, cliente_nif)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
 		nullIfEmpty(r.UUID), r.NIF, r.Serie, r.Date, r.Tipo, r.Generado, r.Cuota, r.Importe, r.Huella,
 		nullIfEmpty(r.EnlaceSerie), nullIfEmpty(r.EnlaceFecha), nullIfEmpty(r.EnlaceHuella),
-		r.XML, time.Now().UTC().Format(time.RFC3339))
+		r.XML, time.Now().UTC().Format(time.RFC3339), nullIfEmpty(r.ClientNIF))
 	if err != nil {
 		return 0, fmt.Errorf("no se pudo storeRow el chainRow: %w", err)
 	}
@@ -235,6 +244,22 @@ WHERE r.uuid=?;`, recordUUID).Scan(&f.UUID, &f.ID, &f.NIF, &f.Serie, &f.Date, &f
 		return LedgerRow{}, false, nil
 	}
 	return f, err == nil, err
+}
+
+// XMLByUUID returns the stored submission XML of one record by its public
+// UUID. The fiscal fields beyond the ledger columns (client, concept, VAT
+// breakdown) live only inside the XML; the duplicate-last flow reads them
+// from here.
+func (s *Store) XMLByUUID(recordUUID string) (string, bool, error) {
+	var xmlStr string
+	err := s.db.QueryRow(`SELECT xml FROM registros WHERE uuid=?;`, recordUUID).Scan(&xmlStr)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("no se pudo leer el XML del chainRow: %w", err)
+	}
+	return xmlStr, true, nil
 }
 
 // ChainRecord es todo lo necesario para verificar la cadena completa.

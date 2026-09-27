@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -23,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -94,6 +96,7 @@ func main() {
 		Store: store, Submitter: remisor,
 		Flujo:     application.NewControlFlujo(time.Now),
 		EmisorNIF: nif, EmisorNombre: nombre,
+		LicenseCheck: licencia,
 		Sistema: application.SystemInfo{
 			NombreProductor: "Facturable", NIFProductor: "B00000000", // productor real: T-8.1
 			NombreSistema: "Facturable Sello", IDSistema: "FS",
@@ -155,6 +158,7 @@ func main() {
 
 	// Planificador de remisión: la AEAT exige esperar entre envíos; un ciclo
 	// por minuto encaja con el control de flujo (spec AEAT §6.4.4.1).
+	// Con relay configurado, el mismo ciclo vacía el buzón cifrado.
 	go func() {
 		for range time.Tick(60 * time.Second) {
 			n, err := srv.SubmitPending(context.Background())
@@ -162,6 +166,13 @@ func main() {
 				log.Printf("remisión: %v", err)
 			} else if n > 0 {
 				log.Printf("remisión: %d chainRow(s) enviados", n)
+			}
+			if relayCli != nil {
+				if p, err := relayCli.Pull(context.Background()); err != nil {
+					log.Printf("relay pull: %v", err)
+				} else if p > 0 {
+					log.Printf("relay: %d sobre(s) ingestado(s)", p)
+				}
 			}
 		}
 	}()
@@ -335,6 +346,44 @@ func main() {
 		})
 	}))
 
+	// POST /v1/invoices/{uuid}:duplicate (Google-style custom method): re-
+	// stamps a copy of that record dated today with a fresh series — the
+	// "repeat last month's invoice" button. ServeMux wildcards must fill a
+	// whole segment, so the ":duplicate" suffix arrives inside {uuid}.
+	mux.HandleFunc("POST /v1/invoices/{uuid}", guard(func(w http.ResponseWriter, r *http.Request) {
+		const action = ":duplicate"
+		seg := r.PathValue("uuid")
+		if !strings.HasSuffix(seg, action) {
+			writeProblem(w, http.StatusNotFound, "no existe el recurso solicitado")
+			return
+		}
+		res, err := srv.DuplicateInvoice(strings.TrimSuffix(seg, action))
+		if err != nil {
+			if errors.Is(err, sello.ErrRecordNotFound) {
+				writeProblem(w, http.StatusNotFound, "no existe el registro solicitado")
+				return
+			}
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, res)
+	}))
+
+	// POST /v1/recurring: the fixed monthly list of frequent clients; every
+	// invoice is generated + stamped in sequence and the summary answers.
+	mux.HandleFunc("POST /v1/recurring", guard(func(w http.ResponseWriter, r *http.Request) {
+		var clientes []sello.RecurringClient
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&clientes); err != nil {
+			writeErr(w, fmt.Errorf("el cuerpo debe ser un array de facturas fijas (cliente, nif, concepto, base, iva): %v", err))
+			return
+		}
+		if len(clientes) == 0 {
+			writeErr(w, fmt.Errorf("el lote de facturas fijas está vacío"))
+			return
+		}
+		writeJSON(w, sello.NewRecurringBatch(srv, clientes).StampAll())
+	}))
+
 	// Embedded 1-screen UI: the invoice form the smallest business can use.
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -478,6 +527,27 @@ func main() {
 		}
 		writeJSON(w, map[string]int{"enviados": n})
 	})
+	// POST /v1/cancellations: registers the cancellation of an invoice; the
+	// cancellation record enters the chain like any other record.
+	mux.HandleFunc("POST /v1/cancellations", guard(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Serie string `json:"serie"`
+			Fecha string `json:"fecha"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if req.Serie == "" || req.Fecha == "" {
+			writeErr(w, fmt.Errorf("serie y fecha son obligatorios"))
+			return
+		}
+		if _, err := srv.Cancel(req.Serie, req.Fecha); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"anulada": true, "serie": req.Serie, "fecha": req.Fecha})
+	}))
 	mux.HandleFunc("GET /v1/records/{uuid}/pdf", guard(func(w http.ResponseWriter, r *http.Request) {
 		f, ok, err := store.ByUUID(r.PathValue("uuid"))
 		if err != nil || !ok {
@@ -521,6 +591,26 @@ func main() {
 			return
 		}
 		writeJSON(w, map[string]any{"data": filas})
+	})
+
+	// Memoria de clientes: últimos clientes por frecuencia de uso, para
+	// auto-rellenar el formulario (limit, defecto 20).
+	mux.HandleFunc("GET /v1/clients", func(w http.ResponseWriter, r *http.Request) {
+		limite := 20
+		if v := r.URL.Query().Get("limit"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				writeErr(w, fmt.Errorf("el parámetro 'limit' debe ser un entero positivo"))
+				return
+			}
+			limite = n
+		}
+		clientes, err := store.FrequentClients(limite)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"data": clientes})
 	})
 
 	// Auth local (audit high): SELLO_PIN protege /v1/* con Bearer; status y
@@ -715,6 +805,15 @@ func writeErr(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"title": "Error del agente", "status": 400, "detail": err.Error()})
+}
+
+// writeProblem answers with a problem+json body and the given status
+// (problem+json per restful-api-guidelines; writeErr keeps its 400 shortcut).
+func writeProblem(w http.ResponseWriter, status int, detail string) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"title": http.StatusText(status), "status": status, "detail": detail})
 }
 
 // onboarding de certificado -------------------------------------------------
