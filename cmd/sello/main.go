@@ -7,6 +7,12 @@
 //	SELLO_NIF / SELLO_NOMBRE    datos de la empresa que factura
 //	SELLO_CERT_P12 / SELLO_CERT_PASS  certificado cualificado (sin él, remisor simulado)
 //	SELLO_AEAT                  pruebas|produccion (defecto pruebas)
+//	FACTURABLE_API_URL          API pública de versiones (defecto https://api.facturable.es)
+//
+// On first run without SELLO_NIF (and without etc/config.json, the wizard's
+// persisted identity) the agent does NOT abort: it starts in onboarding mode
+// — GET /status answers {"onboarding":true} and PUT /v1/onboarding collects
+// the emisor identity, validates it and stores it for the next start.
 package main
 
 import (
@@ -24,9 +30,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"facturable/internal/licenses"
@@ -54,8 +62,21 @@ func main() {
 	if produccion && (prodNIF == "B00000000" || prodName == "Facturable") {
 		log.Fatal("SELLO_PRODUCER_NIF/NAME/CONTACT reales obligatorios para remitir a producción (declaración responsable, art. 13-15)")
 	}
-	nif := mustEnv("SELLO_NIF")
-	nombre := env("SELLO_NOMBRE", nif)
+	// Emisor identity: etc/config.json (persisted by the onboarding wizard)
+	// provides the defaults, environment variables override them. Without
+	// any identity the agent starts anyway in onboarding mode.
+	configPath := env("SELLO_CONFIG", "etc/config.json")
+	cfg := loadEmisorConfig(configPath)
+	nif := env("SELLO_NIF", cfg.EmisorNIF)
+	nombre := env("SELLO_NOMBRE", cfg.EmisorNombre)
+	if nombre == "" {
+		nombre = nif
+	}
+	// Telemetría opt-in (desactivada por defecto): la preferencia vive en
+	// etc/config.json y este flag compartido la mantiene viva en memoria,
+	// así el endpoint la cambia sin reiniciar y el ticker diario la lee.
+	var telemOptIn atomic.Bool
+	telemOptIn.Store(cfg.TelemetryOptIn)
 
 	store, err := persistence.Abrir(db)
 	if err != nil {
@@ -98,7 +119,7 @@ func main() {
 		EmisorNIF: nif, EmisorNombre: nombre,
 		LicenseCheck: licencia,
 		Sistema: application.SystemInfo{
-			NombreProductor: "Facturable", NIFProductor: "B00000000", // productor real: T-8.1
+			NombreProductor: prodName, NIFProductor: prodNIF, // productor real: T-8.1
 			NombreSistema: "Facturable Sello", IDSistema: "FS",
 			Version: version, NumeroInstalacion: installationNumber(nif),
 		},
@@ -174,6 +195,61 @@ func main() {
 					log.Printf("relay: %d sobre(s) ingestado(s)", p)
 				}
 			}
+		}
+	}()
+
+	// Auto-update: la promesa de la suscripción es que el agente sigue la
+	// normativa sin que el usuario reinstale nada. Cada 24h se pregunta al
+	// API si hay versión nueva; la descarga se verifica con SHA-256 y se
+	// reemplaza el binario en caliente (respaldo .bak), aplicándose al
+	// reiniciar.
+	updater := sello.NewUpdater(env("FACTURABLE_API_URL", "https://api.facturable.es"))
+	go func() {
+		check := func() {
+			info, err := updater.CheckForUpdate(version)
+			if err != nil {
+				log.Printf("comprobación de actualizaciones: %v", err)
+				return
+			}
+			if info == nil {
+				return
+			}
+			log.Printf("Nueva versión disponible: %s (actual: %s)", info.Version, version)
+			if err := updater.ApplyUpdate(info); err != nil {
+				log.Printf("actualización: %v", err)
+				return
+			}
+			log.Printf("Actualizado a %s. Reinicia para aplicar.", info.Version)
+		}
+		check()
+		for range time.Tick(24 * time.Hour) {
+			check()
+		}
+	}()
+
+	// Telemetría opt-in: un ping anónimo al día junto al ciclo del updater,
+	// solo si el usuario lo autorizó. El ping lleva versión, sistema
+	// operativo y cuántas facturas se sellaron en los últimos 30 días —
+	// NUNCA NIFs, nombres ni contenido de facturas: el recuento se computa
+	// en local sobre el libro y solo el número cruza la red.
+	telemetry := sello.NewTelemetry(env("FACTURABLE_API_URL", "https://api.facturable.es"))
+	go func() {
+		ping := func() {
+			if !telemOptIn.Load() {
+				return
+			}
+			count, err := store.CountRecent(nif, time.Now().Add(-30*24*time.Hour))
+			if err != nil {
+				log.Printf("telemetría: %v", err)
+				return
+			}
+			if err := telemetry.Ping(context.Background(), version, runtime.GOOS, count); err != nil {
+				log.Printf("telemetría: %v", err)
+			}
+		}
+		ping()
+		for range time.Tick(24 * time.Hour) {
+			ping()
 		}
 	}()
 
@@ -393,7 +469,27 @@ func main() {
 	mux.HandleFunc("GET /v1/version", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"data": map[string]string{"version": version}})
 	})
+	// GET /v1/updates: live answer to "is my agent current?" — consults the
+	// public API on demand and reports both sides of the comparison.
+	mux.HandleFunc("GET /v1/updates", func(w http.ResponseWriter, _ *http.Request) {
+		info, err := updater.CheckForUpdate(version)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		latest, available := version, false
+		if info != nil {
+			latest, available = info.Version, true
+		}
+		writeJSON(w, map[string]any{"current": version, "latest": latest, "available": available})
+	})
 	mux.HandleFunc("GET /v1/connectivity", checkConnectivity)
+	// POST /v1/telemetry/optin {enabled}: the privacy toggle used by the
+	// UI footer (and reachable without the wizard); persists to
+	// etc/config.json and applies live.
+	mux.HandleFunc("POST /v1/telemetry/optin", telemetryOptIn(configPath, &telemOptIn))
+	// GET /v1/telemetry/status {optin}: current opt-in state for the UI.
+	mux.HandleFunc("GET /v1/telemetry/status", telemetryStatus(&telemOptIn))
 	mux.HandleFunc("GET /v1/declaration", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte(declaration.Text(declaration.Info{
@@ -401,7 +497,7 @@ func main() {
 			ProducerNIF:     prodNIF,
 			ProducerContact: prodContact,
 			SystemName:      "Facturable Sello", SystemID: "FS",
-			Version: version, Installation: "00001",
+			Version: version, Installation: installationNumber(nif),
 			OnlyVerifactu: true, MultiOT: false,
 		})))
 	})
@@ -464,8 +560,14 @@ func main() {
 		})
 	})
 
+	// PUT /v1/onboarding: first-run wizard — validates the NIF, configures
+	// the running service and persists the identity to etc/config.json so
+	// the next start boots ready to stamp.
+	mux.HandleFunc("PUT /v1/onboarding", onboardEmisor(srv, configPath, &nif, &nombre))
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, map[string]any{"status": "ok", "app": "facturable-sello", "modo": modo})
+		writeJSON(w, map[string]any{
+			"status": "ok", "app": "facturable-sello", "modo": modo,
+			"onboarding": nif == ""}) // true = the wizard has not run yet
 	})
 	// Idempotent creation with client UUID (Zalando exception 1): same
 	// uuid+body replays the stored result, different body conflicts 409.
@@ -740,14 +842,6 @@ func env(k, def string) string {
 		return v
 	}
 	return def
-}
-
-func mustEnv(k string) string {
-	v := os.Getenv(k)
-	if v == "" {
-		log.Fatalf("falta la variable de entorno %s (NIF de la empresa que factura)", k)
-	}
-	return v
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

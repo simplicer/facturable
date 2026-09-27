@@ -24,6 +24,24 @@ button:disabled{opacity:.5}
 .ok{background:#1d5c3f22;color:var(--ok)}.err{background:#8a2f2222;color:var(--err)}
 #pdfPreview{width:100%;height:400px;border:1px solid var(--line);border-radius:4px;margin-top:16px;display:none}
 </style></head><body><main>
+
+<div id="welcome" style="display:none">
+	<h1>Bienvenido a Facturable</h1>
+	<p class="sub">Dinos tu NIF y nombre para empezar.</p>
+	<div style="background:#fff;border:1px solid var(--line);border-radius:8px;padding:24px">
+		<label>Tu NIF (el de la empresa que factura)</label>
+		<input id="wbNif" placeholder="12345678Z" autocomplete="off">
+		<label>Tu nombre o razón social</label>
+		<input id="wbNombre" placeholder="Antonio García (Autónomo)" autocomplete="organization">
+		<label style="display:flex;gap:8px;align-items:center;font-weight:400;margin-top:16px;cursor:pointer">
+			<input type="checkbox" id="wbTelemetry" style="width:auto">
+			<span style="font-size:13px;color:var(--muted)">Enviar métricas anónimas para mejorar el producto (solo versión, sistema operativo y número de facturas; nunca datos de tus facturas)</span>
+		</label>
+		<button id="startBtn">Empezar</button>
+	</div>
+</div>
+
+<div id="stampView">
 <h1>Sellar tu factura</h1>
 <p class="sub">Arrastra la factura que ya has hecho en tu programa. Yo le pongo el QR de Hacienda y te la devuelvo lista para enviar.</p>
 
@@ -48,13 +66,49 @@ button:disabled{opacity:.5}
 	</div>
 	<button id="stampBtn">Sellar y enviar a Hacienda</button>
 </div>
+</div><!-- /stampView -->
 
 <div id="r" class="result"></div>
+
+<footer style="margin-top:48px;padding:16px 0;border-top:1px solid var(--line);font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center">
+	<label style="display:flex;gap:6px;align-items:center;font-weight:400;margin:0;cursor:pointer">
+		<input type="checkbox" id="telemetryToggle" style="width:auto;margin:0">
+		<span>Ayudar a mejorar (anónimo)</span>
+	</label>
+	<span id="telemetryNote" style="display:none;color:var(--ok)">✓ Gracias</span>
+</footer>
 </main>
 
 <script>
 const drop=document.getElementById('drop'),file=document.getElementById('file'),fields=document.getElementById('fields'),r=document.getElementById('r');
+const welcome=document.getElementById('welcome'),stampView=document.getElementById('stampView');
+const wbNif=document.getElementById('wbNif'),wbNombre=document.getElementById('wbNombre');
 let pdfFile=null;
+// First run: the agent has no emisor identity yet (status.onboarding) →
+// welcome wizard instead of the stamp form.
+(async()=>{
+	try{
+		const s=await(await fetch('/status')).json();
+		if(s.onboarding){
+			welcome.style.display='block';
+			stampView.style.display='none';
+			wbNif.focus();
+		}
+	}catch(e){/* status unavailable: keep the normal form */}
+})();
+document.getElementById('startBtn').onclick=async()=>{
+	const nifV=wbNif.value.trim(),nomV=wbNombre.value.trim();
+	if(!nifV||!nomV){show('err','Escribe tu NIF y tu nombre para empezar');return}
+	const btn=document.getElementById('startBtn');btn.disabled=true;btn.textContent='Guardando…';
+	try{
+		const res=await fetch('/v1/onboarding',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({nif:nifV,nombre:nomV,telemetry_opt_in:document.getElementById('wbTelemetry').checked})});
+		const j=await res.json().catch(()=>({}));
+		if(!res.ok)throw new Error(j.detail||'No se pudo guardar tu identidad fiscal');
+		welcome.style.display='none';stampView.style.display='block';
+		show('ok','✓ Todo listo, '+nomV+'. Arrastra tu primera factura para sellarla.');
+	}catch(err){show('err','✗ '+err.message)}
+	btn.disabled=false;btn.textContent='Empezar';
+};
 ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
 drop.addEventListener('drop',ev=>{const f=ev.dataTransfer.files[0];if(f)loadFile(f)});
@@ -107,4 +161,24 @@ document.getElementById('stampBtn').onclick=async()=>{
 	btn.disabled=false;btn.textContent='Sellar y enviar a Hacienda';
 };
 function show(cls,msg){r.className='result '+cls;r.textContent=msg;r.style.display='block';setTimeout(()=>r.style.display='none',8000)}
+// Opt-in anonymous telemetry: the footer toggle reflects the stored
+// preference (GET /v1/telemetry/status) and flips it live. Only version,
+// os and invoice count are ever sent — never invoice data.
+const telemetryToggle=document.getElementById('telemetryToggle'),telemetryNote=document.getElementById('telemetryNote');
+(async()=>{
+	try{
+		const s=await(await fetch('/v1/telemetry/status')).json();
+		telemetryToggle.checked=!!s.optin;
+	}catch(e){/* status unavailable: leave the toggle unchecked (opt-out) */}
+})();
+telemetryToggle.addEventListener('change',async()=>{
+	try{
+		const res=await fetch('/v1/telemetry/optin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:telemetryToggle.checked})});
+		if(!res.ok)throw new Error(res.statusText);
+		telemetryNote.style.display=telemetryToggle.checked?'inline':'none';
+	}catch(err){
+		telemetryToggle.checked=!telemetryToggle.checked; // revert on failure
+		show('err','No se pudo guardar tu preferencia de telemetría');
+	}
+});
 </script></main></body></html>

@@ -10,3 +10,6 @@ web/build/
 dist/
 etc/*.ed25519*
 !etc/config.example.json
+
+# local compat shim: lets `go -C facturable ...` work from the repo root
+/facturable

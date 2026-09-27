@@ -332,6 +332,20 @@ ORDER BY r.id LIMIT ?;`, nif, nif, desde, hasta, limite)
 	return out, rows.Err()
 }
 
+// CountRecent returns how many records of a taxpayer were stamped since the
+// given instant (creado_en is RFC3339 UTC, so lexicographic comparison is
+// exact). It feeds the opt-in anonymous telemetry: only the integer count
+// ever leaves the machine.
+func (s *Store) CountRecent(nif string, since time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM registros WHERE nif=? AND creado_en >= ?;`,
+		nif, since.UTC().Format(time.RFC3339)).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("no se pudo contar el registro reciente: %w", err)
+	}
+	return n, nil
+}
+
 func nullIfEmpty(v string) any {
 	if v == "" {
 		return nil
