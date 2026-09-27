@@ -37,6 +37,12 @@ func (q QuickInvoice) ToDraft(lastSeries string, now time.Time) (ingest.Draft, e
 	if err != nil {
 		return ingest.Draft{}, fmt.Errorf("base: %v", err)
 	}
+	// audit abuse #3: the quick form stamps ordinary F1 invoices only, so a
+	// zero or negative base is refused up front — a negative base belongs to
+	// an R1-R5 rectificativa, which this form never produces.
+	if base <= 0 {
+		return ingest.Draft{}, fmt.Errorf("la base imponible debe ser mayor que cero (una base negativa solo cabe en una rectificativa R1-R5)")
+	}
 	rateC, err := application.ToCents(rate)
 	if err != nil || rateC < 0 || rateC > 3000 {
 		return ingest.Draft{}, fmt.Errorf("tipo de IVA %q no válido", rate)

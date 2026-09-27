@@ -1,9 +1,20 @@
 package xmlalta
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
+
+// repeatBlock clones one valid block n times: the batch-size boundary tests
+// need a full 1000/1001-block batch without inflating the fixture.
+func repeatBlock(b string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = b
+	}
+	return out
+}
 
 // validBlock returns a genuine <sum:RegistroFactura> block produced by this
 // same package, so the corrupt-block tests mutate something realistic.
@@ -49,6 +60,22 @@ func TestBatchFromBlocksValidatesBlocks(t *testing.T) {
 			name:    "corrupt block reports its position",
 			blocks:  []string{good, "truncated garbage"},
 			wantErr: "bloque de registro 2 corrupto",
+		},
+		{
+			name:    "empty batch is rejected",
+			blocks:  nil,
+			wantErr: "no hay registros para remitir",
+		},
+		{
+			name:    "batch above the AEAT maximum is rejected",
+			blocks:  repeatBlock(good, MaxRecordsPerBatch+1),
+			wantErr: fmt.Sprintf("máximo %d registros por lote (especificación AEAT)", MaxRecordsPerBatch),
+		},
+		{
+			name:       "batch of exactly the AEAT maximum assembles",
+			blocks:     repeatBlock(good, MaxRecordsPerBatch),
+			wantErr:    "",
+			inEnvelope: "<sum:RegFactuSistemaFacturacion>",
 		},
 	}
 	for _, tc := range cases {

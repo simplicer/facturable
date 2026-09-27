@@ -24,6 +24,15 @@ button:disabled{opacity:.5}
 .ok{background:#1d5c3f22;color:var(--ok)}.err{background:#8a2f2222;color:var(--err)}.warn{background:#8a5a1222;color:var(--accent)}
 button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
 #pdfPreview{width:100%;height:400px;border:1px solid var(--line);border-radius:4px;margin-top:16px;display:none}
+/* Libro de facturas: estados AEAT en español claro, un color por estado */
+table.libro{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:8px;font-size:14px}
+table.libro th,table.libro td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+table.libro th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;white-space:nowrap}
+.estado-pendiente{background:#5b6b7222;color:var(--muted)}
+.estado-correcto{background:#1d5c3f22;color:var(--ok)}
+.estado-avisos{background:#8a5a1222;color:#8a5a12}
+.estado-rechazado{background:#8a2f2222;color:var(--err)}
 </style></head><body><main>
 
 <div id="welcome" style="display:none">
@@ -89,6 +98,23 @@ button.ghost{background:transparent;color:var(--accent);border:1px solid var(--l
 		<div><label>IVA %</label><input id="iva" value="21" style="max-width:80px"></div>
 	</div>
 	<button id="stampBtn">Sellar y enviar a Hacienda</button>
+</div>
+
+<div id="libro" style="margin-top:40px">
+	<h2 style="font-size:20px;margin:0 0 4px">Libro de facturas</h2>
+	<p class="sub" style="margin:0 0 12px">Todas tus facturas selladas y qué ha pasado con cada una en Hacienda.</p>
+	<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+		<label for="libroFiltro" style="margin:0;font-size:13px">Ver solo:</label>
+		<select id="libroFiltro">
+			<option value="">Todas</option>
+			<option value="pendiente">Esperando envío</option>
+			<option value="correcto">Enviado a Hacienda ✓</option>
+			<option value="aceptado_errores">Aceptada con avisos</option>
+			<option value="rechazado">Rechazada — necesita corrección</option>
+		</select>
+	</div>
+	<table class="libro"><thead><tr><th>Factura</th><th>Fecha</th><th>Total</th><th>Estado</th></tr></thead><tbody id="libroBody"></tbody></table>
+	<p id="libroVacio" style="color:var(--muted);font-size:13px;display:none">Todavía no hay facturas en el libro.</p>
 </div>
 </div><!-- /stampView -->
 
@@ -222,7 +248,15 @@ async function loadFile(f){
 		const res=await fetch('/v1/extract',{method:'POST',body:fd});
 		const body=await res.json().catch(()=>({}));
 		const j=body.data||{};
-		if(!res.ok)throw new Error(body.detail||'fallo');
+		if(!res.ok){
+			// OCR failure (tesseract not installed): the user is never left
+			// blocked — tell them how to fix it and offer the manual form.
+			if(body.method==='ocr'){
+				show('err','Tu factura es una imagen escaneada. Instala el programa gratuito Tesseract OCR (https://github.com/tesseract-ocr/tesseract) y reintenta. O rellena los campos manualmente abajo.');
+				return;
+			}
+			throw new Error(body.detail||'fallo');
+		}
 		if(j.campos){
 			if(j.campos.nif)nif.value=j.campos.nif;
 			if(j.campos.base)base.value=j.campos.base;
@@ -237,6 +271,10 @@ document.getElementById('stampBtn').onclick=async()=>{
 	if(!pdfFile){show('err','Primero arrastra tu factura PDF');return}
 	if(!base.value||!cliente.value){show('err','Falta el cliente o la base total');return}
 	const btn=document.getElementById('stampBtn');btn.disabled=true;btn.textContent='Sellando…';
+	// stamp-in-progress guard: the flag goes down BEFORE the fetch, so a user
+	// who closes the tab while "Sellando…" spins gets warned on the next load
+	// that the record may already exist (audit UX).
+	sessionStorage.setItem('facturable-stamp-in-progress','1');
 	const fd=new FormData();
 	fd.append('invoice',pdfFile);
 	fd.append('cliente',cliente.value);
@@ -253,9 +291,12 @@ document.getElementById('stampBtn').onclick=async()=>{
 		show('ok','✓ Factura sellada. Tu PDF con QR de Hacienda se ha descargado.');
 		fields.classList.remove('show');pdfFile=null;base.value='';
 	}catch(err){show('err','✗ '+err.message)}
+	// the outcome reached the user (✓ or ✗): the flag only survives an
+	// abandoned tab, which is exactly the case it must warn about
+	sessionStorage.removeItem('facturable-stamp-in-progress');
 	btn.disabled=false;btn.textContent='Sellar y enviar a Hacienda';
 };
-function show(cls,msg){r.className='result '+cls;r.textContent=msg;r.style.display='block';setTimeout(()=>r.style.display='none',8000)}
+function show(cls,msg,sticky){r.className='result '+cls;r.textContent=msg;r.style.display='block';if(!sticky)setTimeout(()=>r.style.display='none',8000)}
 // Opt-in anonymous telemetry: the footer toggle reflects the stored
 // preference (GET /v1/telemetry/status) and flips it live. Only version,
 // os and invoice count are ever sent — never invoice data.
@@ -276,4 +317,35 @@ telemetryToggle.addEventListener('change',async()=>{
 		show('err','No se pudo guardar tu preferencia de telemetría');
 	}
 });
+// Libro de facturas: the ledger with the AEAT states in plain Spanish and a
+// color each, filtered server-side through GET /v1/records?estado= (audit
+// UX: the user cannot interpret "pendiente", "aceptado_errores", etc.).
+const libroFiltro=document.getElementById('libroFiltro'),libroBody=document.getElementById('libroBody'),libroVacio=document.getElementById('libroVacio');
+const ESTADOS_LIBRO={pendiente:['Esperando envío','estado-pendiente'],correcto:['Enviado a Hacienda ✓','estado-correcto'],aceptado_errores:['Aceptada con avisos','estado-avisos'],rechazado:['Rechazada — necesita corrección','estado-rechazado']};
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function loadLibro(){
+	try{
+		const estado=libroFiltro.value;
+		const res=await fetch('/v1/records?page-size=20'+(estado?'&estado='+encodeURIComponent(estado):''));
+		if(!res.ok)return;
+		const j=await res.json().catch(()=>({}));
+		libroBody.innerHTML='';
+		(j.data||[]).forEach(f=>{
+			const par=ESTADOS_LIBRO[f.Estado]||[f.Estado||'pendiente','estado-pendiente'];
+			const tr=document.createElement('tr');
+			tr.innerHTML='<td>'+esc(f.Serie)+'</td><td>'+esc(f.Date)+'</td><td>'+esc(f.Importe)+' €</td><td><span class="badge '+par[1]+'">'+esc(par[0])+'</span></td>';
+			libroBody.appendChild(tr);
+		});
+		libroVacio.style.display=libroBody.children.length?'none':'block';
+	}catch(e){/* libro no disponible: la tabla se queda como esté */}
+}
+libroFiltro.addEventListener('change',loadLibro);
+loadLibro();
+// Stamp-in-progress guard: a flag left over by a tab closed mid-stamping
+// means the record may exist without the user knowing (audit UX). The
+// message is sticky: this warning must not fade away after 8 seconds.
+if(sessionStorage.getItem('facturable-stamp-in-progress')){
+	sessionStorage.removeItem('facturable-stamp-in-progress');
+	show('warn','La última operación pudo no completarse. Revisa el libro de facturas.',true);
+}
 </script></main></body></html>

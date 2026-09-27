@@ -33,6 +33,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,9 +60,42 @@ import (
 // reachable from another machine (audit hardening).
 const agentListenAddr = "127.0.0.1:8787"
 
+// Scheduled ledger protection (audit data-loss): every 500 ticks of the 60 s
+// cycle (~8 h) the agent flushes the WAL and writes an encrypted copy of the
+// ledger under var/backups/, keeping only the newest 5 so years of
+// eight-hourly copies can never fill the disk.
+const (
+	backupEveryTicks = 500
+	backupKeep       = 5
+)
+
+// corruptDBMessage is the user-facing instruction when the ledger file
+// cannot be opened as a database: the agent cannot run and the only safe
+// way forward is restoring the last scheduled copy (or support).
+const corruptDBMessage = "La base de datos está corrupta. Restaura desde un backup en var/backups/ o contacta soporte."
+
+// corruptDB classifies open errors that mean the ledger file is not a
+// usable SQLite database: the driver answers SQLITE_NOTADB "file is not a
+// database" for a corrupted or foreign file, and SQLITE_CORRUPT "database
+// disk image is malformed" when corruption surfaces on first use. Any other
+// open failure (permissions, path…) is NOT corruption.
+func corruptDB(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "file is not a database") ||
+		strings.Contains(msg, "database disk image is malformed")
+}
+
 func main() {
 	version := env("FACTURABLE_VERSION", "0.1.0-unstable")
 	db := env("SELLO_DB", "var/sello.sqlite")
+	// Local auth secret (declared here because the scheduled backup below
+	// shares it): it is both the Bearer of /v1/* and the passphrase of the
+	// encrypted ledger copies — the same user-held secret that already
+	// protects the stored certificate (see saveCertificate).
+	pin := os.Getenv("SELLO_PIN")
 	produccion := os.Getenv("SELLO_AEAT") == "produccion"
 
 	prodName := env("SELLO_PRODUCER_NAME", "Facturable")
@@ -98,6 +132,12 @@ func main() {
 
 	store, err := persistence.Abrir(db)
 	if err != nil {
+		// audit data-loss: a ledger file that is not a database must never
+		// die on a silent, cryptic driver error — the user gets the restore
+		// instruction and the technical detail goes to the log for support.
+		if corruptDB(err) {
+			log.Fatalf("%s (detalle técnico: %v)", corruptDBMessage, err)
+		}
 		log.Fatal(err)
 	}
 	defer store.Close()
@@ -203,13 +243,30 @@ func main() {
 	// Submission scheduler: the AEAT mandates waiting between submissions;
 	// a per-minute cycle matches the flow control (AEAT spec 6.4.4.1).
 	// With the relay configured, the same cycle drains the encrypted inbox.
+	// The same 60 s cycle carries the scheduled backup (audit data-loss):
+	// every backupEveryTicks lapses (~8 h) it checkpoints the WAL and writes
+	// an encrypted copy under var/backups/, keeping only backupKeep.
 	go func() {
+		ticks := 0
 		for range time.Tick(60 * time.Second) {
+			ticks++
 			n, err := srv.SubmitPending(context.Background())
 			if err != nil {
 				log.Printf("remisión: %v", err)
 			} else if n > 0 {
 				log.Printf("remisión: %d chainRow(s) enviados", n)
+			}
+			// backupDue on tick 500, 1000, … CountRecords first: an empty
+			// ledger has nothing to protect yet. The count ignores the
+			// emisor on purpose ("" = every taxpayer, Ledger's convention):
+			// the copy protects the whole ledger file, and a NIF changed
+			// through onboarding must never leave old records unprotected.
+			if ticks%backupEveryTicks == 0 {
+				if err := scheduledBackup(store, db, backupsDir(db), pin, backupKeep); err != nil {
+					log.Printf("backup programado: %v", err)
+				} else {
+					log.Printf("backup programado completado en %s", backupsDir(db))
+				}
 			}
 			if relayCli != nil {
 				if p, err := relayCli.Pull(context.Background()); err != nil {
@@ -275,9 +332,9 @@ func main() {
 		}
 	}()
 
-	pin := os.Getenv("SELLO_PIN")
 	// real auth: withPIN (middleware) protects ALL /v1/* routes at the end
-	// of the chain; no business handler sits outside it.
+	// of the chain; no business handler sits outside it. (The secret itself,
+	// SELLO_PIN, is read at the top of main: the scheduled backup shares it.)
 	certTries := newRateLimiter(5, time.Minute)
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /v1/certificates", func(w http.ResponseWriter, r *http.Request) {
@@ -342,10 +399,16 @@ func main() {
 			return
 		}
 		defer f.Close()
-		// Hard 32 MB cap (audit network/input #1): an oversized upload is
-		// rejected, never silently truncated into a corrupt PDF.
-		pdfBytes, err := io.ReadAll(http.MaxBytesReader(w, f, 32<<20))
+		// Hard 50 MB cap (audit: the stamp endpoint never validated the size
+		// of the ORIGINAL PDF): an oversized upload is refused with an
+		// explicit message, never silently truncated into a corrupt PDF nor
+		// fed to the stamper.
+		pdfBytes, err := readStampPDF(w, f)
 		if err != nil {
+			if errors.Is(err, errStampPDFTooLarge) {
+				writeProblem(w, http.StatusRequestEntityTooLarge, err.Error())
+				return
+			}
 			writeErr(w, err)
 			return
 		}
@@ -413,6 +476,12 @@ func main() {
 			CSV: f2.CSV, Estado: f2.Estado,
 		})
 		if err != nil {
+			// a password-protected PDF is user-fixable input: the clear
+			// instruction is the whole answer (audit UX), not a wrapped 400
+			if errors.Is(err, pdf.ErrPasswordProtected) {
+				writeProblem(w, http.StatusUnprocessableEntity, err.Error())
+				return
+			}
 			writeErr(w, fmt.Errorf("no se pudo estampar tu PDF: %v", err))
 			return
 		}
@@ -538,7 +607,10 @@ func main() {
 			method = "ocr"
 			text, textErr = pdf.OCRViaTesseract(pdfBytes, "spa")
 			if textErr != nil {
-				writeErr(w, fmt.Errorf("no se pudo extraer texto (ni texto directo ni OCR): %v", textErr))
+				// the failed method travels in the problem body so the UI
+				// can tell the scanned-invoice user exactly what to do
+				// (install tesseract or fill the fields manually)
+				writeExtractProblem(w, textErr)
 				return
 			}
 		}
@@ -683,28 +755,8 @@ func main() {
 
 	// Records collection: query-selected representation (paginated JSON by
 	// default, CSV for the tax advisor with format=csv + date filters).
-	mux.HandleFunc("GET /v1/records", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("format") == "csv" {
-			q := r.URL.Query()
-			from, to := q.Get("from"), q.Get("to")
-			if from == "" {
-				from = "01-01-2020"
-			}
-			if to == "" {
-				to = time.Now().Format("02-01-2006")
-			}
-			b, _, err := srv.ExportPeriod(from, to)
-			if err != nil {
-				writeErr(w, err)
-				return
-			}
-			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-			w.Header().Set("Content-Disposition", "attachment; filename=libro-facturas.csv")
-			_, _ = w.Write(b)
-			return
-		}
-		writeRecordsPage(w, r, store, nif)
-	})
+	licenciaEstado := func() string { return licenseStatus(licencia, os.Getenv("LICENSE_TOKEN") != "") }
+	mux.HandleFunc("GET /v1/records", recordsCollection(srv, store, nif, licenciaEstado))
 
 	// Client memory: recent clients by usage frequency, to auto-fill the
 	// form (limit, default 20).
@@ -861,6 +913,59 @@ func installationNumber(nif string) string {
 	return string(out)
 }
 
+// backupsDir is where the scheduled encrypted copies live: next to the
+// ledger file (var/backups/ with the default database path) — the same
+// folder the corrupt-database message points the user to.
+func backupsDir(dbPath string) string {
+	return filepath.Join(filepath.Dir(dbPath), "backups")
+}
+
+// scheduledBackup writes ONE encrypted copy of the ledger under dir and
+// prunes the oldest copies beyond keep (audit data-loss). CountRecords
+// decides first: an empty ledger has nothing to protect yet. The WAL is
+// checkpointed before the copy so the main file is complete. The passphrase
+// is the agent's local secret (SELLO_PIN; empty when the user never set
+// one) — restore with selloctl/RestoreBackup and that same secret.
+func scheduledBackup(store *persistence.Store, dbPath, dir, password string, keep int) error {
+	total, err := store.CountRecords("")
+	if err != nil {
+		return fmt.Errorf("no se pudo contar el libro: %v", err)
+	}
+	if total == 0 {
+		return nil
+	}
+	if err := store.Checkpoint(); err != nil {
+		return fmt.Errorf("checkpoint previo a la copia: %v", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("no se pudo crear %s: %v", dir, err)
+	}
+	dest := filepath.Join(dir, "sello-"+time.Now().UTC().Format("20060102-150405")+".fbk")
+	if err := sello.CreateBackup(dbPath, dest, password); err != nil {
+		return err
+	}
+	return pruneBackups(dir, keep)
+}
+
+// pruneBackups deletes the oldest sello-*.fbk copies beyond keep: the UTC
+// timestamp inside the name sorts lexicographically, so the newest survive.
+func pruneBackups(dir string, keep int) error {
+	copias, err := filepath.Glob(filepath.Join(dir, "sello-*.fbk"))
+	if err != nil {
+		return err
+	}
+	if len(copias) <= keep {
+		return nil
+	}
+	sort.Strings(copias)
+	for _, vieja := range copias[:len(copias)-keep] {
+		if err := os.Remove(vieja); err != nil {
+			return fmt.Errorf("no se pudo borrar la copia antigua %s: %v", vieja, err)
+		}
+	}
+	return nil
+}
+
 // securityHeaders adds the browser-protection headers to EVERY response
 // (audit network/input #4): nosniff stops MIME sniffing on agent downloads
 // (PDF/CSV) and DENY forbids framing the local agent from other origins.
@@ -888,6 +993,30 @@ func withPIN(pin string, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// maxStampPDF caps the ORIGINAL PDF upload of POST /v1/stamps (audit: the
+// stamp endpoint never validated the document size; stamping a multi-gigabyte
+// upload would exhaust the agent's memory).
+const maxStampPDF = 50 << 20 // 50 MB
+
+// errStampPDFTooLarge is the user-facing rejection of an original PDF above
+// the stamp cap.
+var errStampPDFTooLarge = errors.New("el PDF es demasiado grande (máximo 50MB)")
+
+// readStampPDF reads the uploaded PDF enforcing the hard cap: an upload
+// above it is refused with errStampPDFTooLarge, never silently truncated
+// into a corrupt PDF.
+func readStampPDF(w http.ResponseWriter, f io.ReadCloser) ([]byte, error) {
+	b, err := io.ReadAll(http.MaxBytesReader(w, f, maxStampPDF))
+	if err != nil {
+		var too *http.MaxBytesError
+		if errors.As(err, &too) {
+			return nil, errStampPDFTooLarge
+		}
+		return nil, err
+	}
+	return b, nil
 }
 
 // construirRemisor devuelve el remisor AEAT real cuando hay certificado, o
@@ -1000,7 +1129,10 @@ const (
 
 // writeRecordsPage answers the JSON representation of GET /v1/records with
 // pagination: ?page=1&page-size=50 by default, envelope {data:[…]} and meta
-// {page, page_size, total}. Invalid query values are a 422 (validation).
+// {page, page_size, total}. ?estado= selects one submission state
+// (pendiente|correcto|aceptado_errores|rechazado) so the user can review,
+// e.g., only the records waiting to be sent. Invalid query values are a 422
+// (validation).
 func writeRecordsPage(w http.ResponseWriter, r *http.Request, store *persistence.Store, nif string) {
 	page, pageSize := defaultPage, defaultPageSize
 	if v := r.URL.Query().Get("page"); v != "" {
@@ -1019,7 +1151,15 @@ func writeRecordsPage(w http.ResponseWriter, r *http.Request, store *persistence
 		}
 		pageSize = n
 	}
-	filas, total, err := store.LedgerPage(nif, 0, 1_000_000_000, pageSize, (page-1)*pageSize)
+	estado := r.URL.Query().Get("estado")
+	switch estado {
+	case "", "pendiente", "correcto", "aceptado_errores", "rechazado":
+	default:
+		writeProblem(w, http.StatusUnprocessableEntity,
+			"el parámetro 'estado' debe ser pendiente, correcto, aceptado_errores o rechazado")
+		return
+	}
+	filas, total, err := store.LedgerPageByEstado(nif, 0, 1_000_000_000, pageSize, (page-1)*pageSize, estado)
 	if err != nil {
 		writeErr(w, internalErr(err))
 		return
@@ -1028,6 +1168,52 @@ func writeRecordsPage(w http.ResponseWriter, r *http.Request, store *persistence
 		"data": filas,
 		"meta": map[string]int{"page": page, "page_size": pageSize, "total": total},
 	})
+}
+
+// recordsCollection answers GET /v1/records: paginated JSON by default, CSV
+// for the tax advisor with format=csv + date filters. The export NEVER
+// requires a license (never-hostage rule, INFORME-NEGOCIO §1.4): it only
+// informs the client of the current license state through the
+// X-License-Status header (audit abuse #5).
+func recordsCollection(srv *sello.Service, store *persistence.Store, nif string, licenciaEstado func() string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("format") == "csv" {
+			q := r.URL.Query()
+			from, to := q.Get("from"), q.Get("to")
+			if from == "" {
+				from = "01-01-2020"
+			}
+			if to == "" {
+				to = time.Now().Format("02-01-2006")
+			}
+			b, _, err := srv.ExportPeriod(from, to)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			w.Header().Set("X-License-Status", licenciaEstado())
+			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+			w.Header().Set("Content-Disposition", "attachment; filename=libro-facturas.csv")
+			_, _ = w.Write(b)
+			return
+		}
+		writeRecordsPage(w, r, store, nif)
+	}
+}
+
+// licenseStatus classifies the license state for the informative
+// X-License-Status header (audit abuse #5): "none" when the agent runs
+// without LICENSE_TOKEN (development mode), "active" when the license gate
+// accepts, "expired" when a token is configured but the license no longer
+// grants. It never blocks anything by itself.
+func licenseStatus(gate func() (bool, string), tokenConfigured bool) string {
+	if !tokenConfigured {
+		return "none"
+	}
+	if ok, _ := gate(); ok {
+		return "active"
+	}
+	return "expired"
 }
 
 // latestUUID returns the most recent record UUID.
@@ -1114,6 +1300,22 @@ func writeProblem(w http.ResponseWriter, status int, detail string) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"title": http.StatusText(status), "status": status, "detail": detail})
+}
+
+// writeExtractProblem answers a failed fiscal-field extraction (no PDF text
+// and no OCR either) with a problem+json body that carries the method that
+// failed ("ocr"), so the UI can tell the scanned-invoice user exactly what
+// to do — install tesseract or fill the fields manually — instead of
+// leaving them blocked with a cryptic error (audit UX).
+func writeExtractProblem(w http.ResponseWriter, cause error) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"title":  "Error del agente",
+		"status": http.StatusBadRequest,
+		"detail": "no se pudo extraer texto de la factura (ni texto directo ni OCR): " + cause.Error(),
+		"method": "ocr",
+	})
 }
 
 // onboarding de certificado -------------------------------------------------

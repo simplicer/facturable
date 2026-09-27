@@ -354,6 +354,8 @@ type LedgerRow struct {
 	Estado                 string
 	CSV                    string
 	Remitido               string
+	ClientNIF              string `json:"cliente_nif,omitempty"` // recipient, empty on rows without client memory
+	ClientName             string `json:"cliente_nombre,omitempty"`
 }
 
 // Ledger returns the ledger ordered by insertion with the latest state.
@@ -364,10 +366,12 @@ SELECT r.uuid, r.id, r.nif, r.series, r.fecha, r.tipo, r.cuota, r.importe, r.hue
        COALESCE(e.csv, (SELECT csv FROM remisiones
                          WHERE registro_id = r.id AND csv IS NOT NULL
                          ORDER BY intento DESC LIMIT 1), ''),
-       COALESCE(e.fecha,'')
+       COALESCE(e.fecha,''),
+       COALESCE(r.cliente_nif,''), COALESCE(c.nombre,'')
 FROM registros r
 LEFT JOIN remisiones e ON e.registro_id = r.id AND e.intento = (
   SELECT MAX(intento) FROM remisiones WHERE registro_id = r.id)
+LEFT JOIN clientes c ON c.nif = r.cliente_nif
 WHERE (? = '' OR r.nif = ?) AND r.id BETWEEN ? AND ?
 ORDER BY r.id LIMIT ?;`, nif, nif, desde, hasta, limite)
 	if err != nil {
@@ -377,7 +381,7 @@ ORDER BY r.id LIMIT ?;`, nif, nif, desde, hasta, limite)
 	var out []LedgerRow
 	for rows.Next() {
 		var f LedgerRow
-		if err := rows.Scan(&f.UUID, &f.ID, &f.NIF, &f.Serie, &f.Date, &f.Tipo, &f.Cuota, &f.Importe, &f.Huella, &f.Estado, &f.CSV, &f.Remitido); err != nil {
+		if err := rows.Scan(&f.UUID, &f.ID, &f.NIF, &f.Serie, &f.Date, &f.Tipo, &f.Cuota, &f.Importe, &f.Huella, &f.Estado, &f.CSV, &f.Remitido, &f.ClientNIF, &f.ClientName); err != nil {
 			return nil, err
 		}
 		out = append(out, f)
@@ -390,23 +394,49 @@ ORDER BY r.id LIMIT ?;`, nif, nif, desde, hasta, limite)
 // pagination meta (page, page_size, total) without a second round trip.
 // offset counts rows, not pages: offset = (page-1)*page_size.
 func (s *Store) LedgerPage(nif string, desde, hasta int64, limit, offset int) ([]LedgerRow, int, error) {
+	return s.LedgerPageByEstado(nif, desde, hasta, limit, offset, "")
+}
+
+// LedgerPageByEstado is LedgerPage filtered by the latest submission state
+// ("correcto", "aceptado_errores" or "rechazado"); records without any
+// submission count as "pendiente". An empty estado selects every record.
+// The pagination total respects the filter so the meta stays consistent.
+func (s *Store) LedgerPageByEstado(nif string, desde, hasta int64, limit, offset int, estado string) ([]LedgerRow, int, error) {
 	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM registros WHERE (? = '' OR nif = ?) AND id BETWEEN ? AND ?;`,
-		nif, nif, desde, hasta).Scan(&total); err != nil {
+	countQuery := `SELECT COUNT(*) FROM registros r
+LEFT JOIN remisiones e ON e.registro_id = r.id AND e.intento = (
+  SELECT MAX(intento) FROM remisiones WHERE registro_id = r.id)
+WHERE (? = '' OR r.nif = ?) AND r.id BETWEEN ? AND ?`
+	countArgs := []any{nif, nif, desde, hasta}
+	if estado != "" {
+		countQuery += ` AND COALESCE(e.estado,'pendiente') = ?`
+		countArgs = append(countArgs, estado)
+	}
+	if err := s.db.QueryRow(countQuery+`;`, countArgs...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("no se pudo contar el libro: %w", err)
 	}
-	rows, err := s.db.Query(`
+	query := `
 SELECT r.uuid, r.id, r.nif, r.series, r.fecha, r.tipo, r.cuota, r.importe, r.huella,
        COALESCE(e.estado,'pendiente'),
        COALESCE(e.csv, (SELECT csv FROM remisiones
                          WHERE registro_id = r.id AND csv IS NOT NULL
                          ORDER BY intento DESC LIMIT 1), ''),
-       COALESCE(e.fecha,'')
+       COALESCE(e.fecha,''),
+       COALESCE(r.cliente_nif,''), COALESCE(c.nombre,'')
 FROM registros r
 LEFT JOIN remisiones e ON e.registro_id = r.id AND e.intento = (
   SELECT MAX(intento) FROM remisiones WHERE registro_id = r.id)
-WHERE (? = '' OR r.nif = ?) AND r.id BETWEEN ? AND ?
-ORDER BY r.id LIMIT ? OFFSET ?;`, nif, nif, desde, hasta, limit, offset)
+LEFT JOIN clientes c ON c.nif = r.cliente_nif
+WHERE (? = '' OR r.nif = ?) AND r.id BETWEEN ? AND ?`
+	queryArgs := []any{nif, nif, desde, hasta}
+	if estado != "" {
+		query += ` AND COALESCE(e.estado,'pendiente') = ?`
+		queryArgs = append(queryArgs, estado)
+	}
+	query += `
+ORDER BY r.id LIMIT ? OFFSET ?;`
+	queryArgs = append(queryArgs, limit, offset)
+	rows, err := s.db.Query(query, queryArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("no se pudo leer el libro: %w", err)
 	}
@@ -414,7 +444,7 @@ ORDER BY r.id LIMIT ? OFFSET ?;`, nif, nif, desde, hasta, limit, offset)
 	out := []LedgerRow{}
 	for rows.Next() {
 		var f LedgerRow
-		if err := rows.Scan(&f.UUID, &f.ID, &f.NIF, &f.Serie, &f.Date, &f.Tipo, &f.Cuota, &f.Importe, &f.Huella, &f.Estado, &f.CSV, &f.Remitido); err != nil {
+		if err := rows.Scan(&f.UUID, &f.ID, &f.NIF, &f.Serie, &f.Date, &f.Tipo, &f.Cuota, &f.Importe, &f.Huella, &f.Estado, &f.CSV, &f.Remitido, &f.ClientNIF, &f.ClientName); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, f)
@@ -432,6 +462,19 @@ func (s *Store) CountRecent(nif string, since time.Time) (int, error) {
 		nif, since.UTC().Format(time.RFC3339)).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("no se pudo contar el registro reciente: %w", err)
+	}
+	return n, nil
+}
+
+// CountRecords returns how many ledger records a taxpayer holds in total;
+// an empty NIF counts every taxpayer (same convention as Ledger). The
+// scheduled backup reads it to skip the copy while the ledger still holds
+// no records: there is nothing to protect yet.
+func (s *Store) CountRecords(nif string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM registros WHERE (? = '' OR nif = ?);`, nif, nif).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("no se pudo contar el libro: %w", err)
 	}
 	return n, nil
 }

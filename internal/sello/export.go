@@ -10,13 +10,16 @@ import (
 )
 
 // ExportLedger produces the period CSV for the tax advisor (issued-invoice
-// book with its AEAT state). Available ALWAYS, with or without a valid
-// license: the user is never held hostage by their own data.
+// book with its AEAT state). The two trailing columns carry the client NIF
+// and name — model 303 needs the recipient identity, not only the emisor
+// totals. Available ALWAYS, with or without a valid license: the user is
+// never held hostage by their own data.
 func ExportLedger(filas []persistence.LedgerRow) ([]byte, error) {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
 	header := []string{"Serie", "Date", "Tipo", "Base+Cuota", "CuotaTotal",
-		"ImporteTotal", "EstadoAEAT", "CSV", "Huella", "Remitido"}
+		"ImporteTotal", "EstadoAEAT", "CSV", "Huella", "Remitido",
+		"NIFCliente", "NombreCliente"}
 	if err := w.Write(header); err != nil {
 		return nil, err
 	}
@@ -27,6 +30,7 @@ func ExportLedger(filas []persistence.LedgerRow) ([]byte, error) {
 			sanitizeCSVField(f.Cuota), sanitizeCSVField(f.Importe),
 			sanitizeCSVField(f.Estado), sanitizeCSVField(f.CSV),
 			sanitizeCSVField(f.Huella), sanitizeCSVField(f.Remitido),
+			sanitizeCSVField(f.ClientNIF), sanitizeCSVField(f.ClientName),
 		}); err != nil {
 			return nil, err
 		}

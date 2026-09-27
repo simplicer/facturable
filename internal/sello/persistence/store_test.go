@@ -269,3 +269,68 @@ func TestLedgerPage(t *testing.T) {
 		t.Fatalf("empty page: rows=%d total=%d err=%v", len(rows), n, err)
 	}
 }
+
+// TestCountRecords: the total number of ledger records of a taxpayer. The
+// scheduled backup uses it to decide whether there is anything to protect;
+// an empty NIF counts every taxpayer (same convention as Ledger).
+func TestCountRecords(t *testing.T) {
+	s := newTestStore(t)
+	n, err := s.CountRecords("B72877814")
+	if err != nil || n != 0 {
+		t.Fatalf("CountRecords en libro vacío = %d, %v; want 0", n, err)
+	}
+	if _, err := s.Append(chainRow(1, strings.Repeat("A", 64), "")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Append(chainRow(2, strings.Repeat("B", 64), strings.Repeat("A", 64))); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.CountRecords("B72877814"); err != nil || n != 2 {
+		t.Fatalf("CountRecords = %d, %v; want 2", n, err)
+	}
+	if n, err := s.CountRecords("OTRO-NIF"); err != nil || n != 0 {
+		t.Fatalf("CountRecords de otro NIF = %d, %v; want 0", n, err)
+	}
+	if n, err := s.CountRecords(""); err != nil || n != 2 {
+		t.Fatalf("CountRecords sin NIF = %d, %v; want 2 (todos los contribuyentes)", n, err)
+	}
+}
+
+// TestLedgerDevuelveCliente: the ledger view carries the recipient NIF and
+// name (the tax-advisor export needs them for model 303). Rows stamped
+// before client memory existed come back empty, never an error.
+func TestLedgerDevuelveCliente(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.Append(StoredRecord{
+		NIF: "B72877814", Serie: "F-2027-0001", Date: "05-01-2027", Tipo: "F1",
+		Generado: "2027-01-05T10:00:00+01:00", Cuota: "21.00", Importe: "121.00",
+		Huella: strings.Repeat("A", 64), XML: "<xml/>",
+		ClientNIF: "B12345678",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Append(chainRow(2, strings.Repeat("B", 64), strings.Repeat("A", 64))); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertClient("B12345678", "Cliente SL"); err != nil {
+		t.Fatal(err)
+	}
+	filas, err := s.Ledger("B72877814", 0, 1_000_000, 10)
+	if err != nil || len(filas) != 2 {
+		t.Fatalf("Ledger = %d filas, %v", len(filas), err)
+	}
+	// oldest first: the second row was stamped without client memory
+	if filas[1].ClientNIF != "" || filas[1].ClientName != "" {
+		t.Fatalf("fila antigua con cliente = %q/%q, want vacío", filas[1].ClientNIF, filas[1].ClientName)
+	}
+	if filas[0].ClientNIF != "B12345678" || filas[0].ClientName != "Cliente SL" {
+		t.Fatalf("cliente = %q/%q, want B12345678/Cliente SL", filas[0].ClientNIF, filas[0].ClientName)
+	}
+	pag, total, err := s.LedgerPage("B72877814", 0, 1_000_000, 10, 0)
+	if err != nil || total != 2 || len(pag) != 2 {
+		t.Fatalf("LedgerPage = %d filas, total %d, %v", len(pag), total, err)
+	}
+	if pag[0].ClientNIF != "B12345678" || pag[0].ClientName != "Cliente SL" {
+		t.Fatalf("cliente en página = %q/%q", pag[0].ClientNIF, pag[0].ClientName)
+	}
+}

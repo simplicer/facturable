@@ -45,6 +45,17 @@ func (s *Service) licenseCheck() (bool, string) {
 	return s.LicenseCheck()
 }
 
+// selfInvoiceDetail is the user-facing reason an invoice billed to the
+// emisor's own NIF is refused (audit abuse #2): billing yourself is an
+// autofactura (art. 6 ROF), never an ordinary stamping.
+const selfInvoiceDetail = "no puedes facturarte a ti mismo (usa autofactura según el art. 6 del ROF)"
+
+// isSelfInvoice reports whether the draft bills the emisor itself. Empty
+// NIFs never match: records without a known recipient stay legal.
+func (s *Service) isSelfInvoice(clientNIF string) bool {
+	return s.EmisorNIF != "" && clientNIF != "" && clientNIF == s.EmisorNIF
+}
+
 // IngestResult resumes one CSV ingestion.
 type IngestResult struct {
 	Sellados int               `json:"sellados"`
@@ -57,6 +68,13 @@ func (s *Service) IngestCSV(r io.Reader) (*IngestResult, error) {
 	res := &IngestResult{Errores: errores}
 
 	for _, b := range borradores {
+		// self-invoice guard (audit abuse #2): the emisor can never be his
+		// own client through the stamping pipeline
+		if s.isSelfInvoice(b.ClientNIF) {
+			res.Errores = append(res.Errores, ingest.RowError{
+				Fila: b.Fila, Campo: "nif_cliente", Detalle: selfInvoiceDetail})
+			continue
+		}
 		if dup, err := s.Store.HasSeries(s.EmisorNIF, b.Series); err == nil && dup {
 			res.Errores = append(res.Errores, ingest.RowError{
 				Fila: b.Fila, Campo: "numero_serie",
@@ -101,6 +119,14 @@ func (s *Service) IngestCSV(r io.Reader) (*IngestResult, error) {
 func (s *Service) IngestDrafts(drafts []ingest.Draft) (*IngestResult, error) {
 	res := &IngestResult{}
 	for i, d := range drafts {
+		// self-invoice guard (audit abuse #2): the emisor can never be his
+		// own client through the stamping pipeline (quick form, stamps,
+		// recurring, duplicate and relay all land here)
+		if s.isSelfInvoice(d.ClientNIF) {
+			res.Errores = append(res.Errores, ingest.RowError{
+				Fila: i + 1, Campo: "nif", Detalle: selfInvoiceDetail})
+			continue
+		}
 		// relay/API idempotency: already-stamped series is reported, never double-stamped
 		if dup, err := s.Store.HasSeries(s.EmisorNIF, d.Series); err == nil && dup {
 			res.Errores = append(res.Errores, ingest.RowError{

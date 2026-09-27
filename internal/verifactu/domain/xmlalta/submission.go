@@ -35,6 +35,9 @@ const (
 	FingerprintTypeSHA256 = "01"
 	// MaxBreakdownLines is the maximum number of Desglose lines per record.
 	MaxBreakdownLines = 12
+	// MaxRecordsPerBatch is the maximum number of billing records one
+	// remittance envelope may carry (AEAT spec 6.4.4.1).
+	MaxRecordsPerBatch = 1000
 )
 
 // Issuer is the issuing party of the submission (ObligadoEmision).
@@ -205,9 +208,16 @@ func SplitRecordBlocks(soapXML string) []string {
 // (as returned by SplitRecordBlocks) for one obligado tributario. Every
 // block is checked for the mandatory <sum1:IDVersion> and <sum1:Huella>
 // elements before concatenation, so a corrupted block is reported instead
-// of being remitted to the AEAT.
+// of being remitted to the AEAT. An empty batch and a batch above the AEAT
+// maximum (MaxRecordsPerBatch) are rejected before any envelope is built.
 func BatchFromBlocks(issuerName, issuerNIF string, blocks []string) (string, error) {
 	const open, close = "<sum:RegistroFactura>", "</sum:RegistroFactura>"
+	if len(blocks) == 0 {
+		return "", errors.New("no hay registros para remitir")
+	}
+	if len(blocks) > MaxRecordsPerBatch {
+		return "", fmt.Errorf("máximo %d registros por lote (especificación AEAT)", MaxRecordsPerBatch)
+	}
 	var buf bytes.Buffer
 	buf.WriteString(xml.Header)
 	buf.WriteString(`<soapenv:Envelope xmlns:soapenv="` + NamespaceSOAPEnvelope + `" xmlns:sum="` + NamespaceSuministroLR + `" xmlns:sum1="` + NamespaceSuministroInfo + `" xmlns:xd="` + NamespaceXMLDSig + `">`)

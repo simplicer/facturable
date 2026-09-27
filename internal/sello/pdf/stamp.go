@@ -6,6 +6,7 @@ package pdf
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -30,12 +31,29 @@ type StampRequest struct {
 	Estado        string // AEAT status
 }
 
+// ErrPasswordProtected marks a password-protected (encrypted) PDF: the QR
+// and legend cannot be stamped into a document the user cannot modify, and
+// the raw parser error would be cryptic (audit UX). Callers detect it with
+// errors.Is and answer with this instruction verbatim.
+var ErrPasswordProtected = errors.New("Tu factura PDF está protegida con contraseña. Quítala desde tu programa de facturación y vuelve a intentarlo")
+
+// encryptRefRe matches the /Encrypt dictionary reference (/Encrypt N 0 R)
+// that lives in the trailer or in the cross-reference stream dictionary of
+// every password-protected PDF.
+var encryptRefRe = regexp.MustCompile(`/Encrypt\s+\d+\s+\d+\s+R`)
+
 // Stamp overlays the QR (30mm, top-center, before content per FAQ) and the
 // VERI*FACTU legend onto the first page of the existing PDF. It works by
 // appending a new content stream to the page — no re-rendering.
 func Stamp(req StampRequest) ([]byte, error) {
 	if len(req.OriginalPDF) < 100 || !bytes.HasPrefix(req.OriginalPDF, []byte("%PDF")) {
 		return nil, fmt.Errorf("el documento no es un PDF válido")
+	}
+	// Password-protected PDFs must be refused up front with a clear
+	// instruction (audit UX): the overlay would otherwise fail inside the
+	// encrypted streams with a message nobody can act on.
+	if encryptRefRe.Match(req.OriginalPDF) {
+		return nil, ErrPasswordProtected
 	}
 
 	// build the overlay content (QR rects + text legend)
