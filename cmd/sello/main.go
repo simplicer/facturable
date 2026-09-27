@@ -218,6 +218,85 @@ func main() {
 		}
 		writeJSON(w, map[string]any{"enviado": true, "to": req.To})
 	}))
+	// POST /v1/stamps: sella el PDF ORIGINAL del cliente (post-procesador).
+	// El programa del cliente genera la factura con 100 líneas → sube el PDF
+	// aquí → extraemos los 9 campos fiscales → sellamos SU documento con QR.
+	mux.HandleFunc("POST /v1/stamps", guard(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			writeErr(w, fmt.Errorf("no se pudo leer el formulario: %v", err))
+			return
+		}
+		f, _, err := r.FormFile("invoice")
+		if err != nil {
+			writeErr(w, fmt.Errorf("falta el fichero 'invoice' (PDF de tu programa)"))
+			return
+		}
+		defer f.Close()
+		pdfBytes, err := io.ReadAll(io.LimitReader(f, 30<<20))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		// campos fiscales confirmados por el humano (o auto-extraídos)
+		q := sello.QuickInvoice{
+			ClientName: r.FormValue("cliente"),
+			ClientNIF:  r.FormValue("nif"),
+			Concept:    r.FormValue("concepto"),
+			Base:       r.FormValue("base"),
+			VATRate:    r.FormValue("iva"),
+		}
+		if q.Base == "" {
+			writeErr(w, fmt.Errorf("falta la base imponible total (campo 'base')"))
+			return
+		}
+
+		// sellar
+		lastSerie, _, _, _, _, _, okL, _ := store.Last(nif)
+		if !okL {
+			lastSerie = ""
+		}
+		draft, err := q.ToDraft(lastSerie, time.Now())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		res, err := srv.IngestDrafts([]ingest.Draft{draft})
+		if err != nil || res.Sellados == 0 {
+			detalle := "no se pudo sellar"
+			if res != nil && len(res.Errores) > 0 {
+				detalle = res.Errores[0].Detalle
+			}
+			writeErr(w, fmt.Errorf("%s", detalle))
+			return
+		}
+
+		// generar URL de cotejo y estampar el PDF ORIGINAL
+		f2, _, _ := store.ByUUID(latestUUID(srv))
+		urlQR, err := qr.VerificationURL(qrEnv(), qr.Query{
+			NIF: nif, InvoiceNumber: draft.Series,
+			ExpeditionDate: draft.Date, TotalAmount: draft.Breakdowns[0].Base,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		stamped, err := pdf.Stamp(pdf.StampRequest{
+			OriginalPDF: pdfBytes, Serie: draft.Series, Fecha: draft.Date,
+			ClienteNIF: q.ClientNIF, ClienteNombre: q.ClientName,
+			BaseImponible: q.Base, CuotaIVA: draft.Breakdowns[0].Fee,
+			TipoIVA: q.VATRate, URLCotejo: urlQR,
+			CSV: f2.CSV, Estado: f2.Estado,
+		})
+		if err != nil {
+			writeErr(w, fmt.Errorf("no se pudo estampar tu PDF: %v", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s-VERIFACTU.pdf", draft.Series))
+		_, _ = w.Write(stamped)
+	}))
+
 	// Quick form (bloqueante MVP): 5 fields, agent fills all defaults.
 	mux.HandleFunc("POST /v1/invoices", guard(func(w http.ResponseWriter, r *http.Request) {
 		var q sello.QuickInvoice
@@ -574,6 +653,15 @@ f.reset();iva.value='21';
 r.style.display='block';b.disabled=false;b.textContent='Sellar y enviar a Hacienda';
 };
 </script></main></body></html>`
+
+// latestUUID returns the most recent record UUID.
+func latestUUID(srv *sello.Service) string {
+	filas, err := srv.Store.Ledger(srv.EmisorNIF, 0, 1_000_000, 1)
+	if err != nil || len(filas) == 0 {
+		return ""
+	}
+	return filas[0].UUID
+}
 
 // qrEnv selects the QR cotejo environment per SELLO_AEAT.
 func qrEnv() qr.Environment {
