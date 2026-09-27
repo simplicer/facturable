@@ -356,6 +356,65 @@ func main() {
 			OnlyVerifactu: true, MultiOT: false,
 		})))
 	})
+	// POST /v1/extract: upload a PDF, get fiscal fields pre-extracted for
+	// the user to confirm. Text-based PDFs parse directly; scanned PDFs
+	// fall back to tesseract OCR if available.
+	mux.HandleFunc("POST /v1/extract", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			writeErr(w, fmt.Errorf("no se pudo leer el formulario: %v", err))
+			return
+		}
+		f, _, err := r.FormFile("invoice")
+		if err != nil {
+			writeErr(w, fmt.Errorf("falta el fichero 'invoice' (PDF)"))
+			return
+		}
+		defer f.Close()
+		pdfBytes, err := io.ReadAll(io.LimitReader(f, 30<<20))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		// 1) try text extraction from PDF streams
+		text, textErr := pdf.ExtractTextFromPDF(pdfBytes)
+		method := "text"
+		if textErr != nil {
+			// 2) OCR fallback via tesseract
+			method = "ocr"
+			text, textErr = pdf.OCRViaTesseract(pdfBytes, "spa")
+			if textErr != nil {
+				writeErr(w, fmt.Errorf("no se pudo extraer texto (ni texto directo ni OCR): %v", textErr))
+				return
+			}
+		}
+
+		// 3) parse fiscal fields from the extracted text
+		nif, base, cuota, serie, fecha, err := pdf.ExtractFiscalFromText(text)
+		if err != nil {
+			// return what we got even if partial
+			writeJSON(w, map[string]any{
+				"method": method,
+				"texto":  text[:min(2000, len(text))],
+				"campos": map[string]string{
+					"nif": nif, "base": base, "cuota": cuota,
+					"serie": serie, "fecha": fecha,
+				},
+				"completo": false,
+				"nota":     "extracción parcial: confirma los campos manualmente",
+			})
+			return
+		}
+		writeJSON(w, map[string]any{
+			"method": method,
+			"campos": map[string]string{
+				"nif": nif, "base": base, "cuota": cuota,
+				"serie": serie, "fecha": fecha,
+			},
+			"completo": true,
+		})
+	})
+
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"status": "ok", "app": "facturable-sello", "modo": modo})
 	})

@@ -59,7 +59,7 @@ let pdfFile=null;
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
 drop.addEventListener('drop',ev=>{const f=ev.dataTransfer.files[0];if(f)loadFile(f)});
 file.addEventListener('change',()=>{if(file.files[0])loadFile(file.files[0])});
-function loadFile(f){
+async function loadFile(f){
 	if(!f.name.toLowerCase().endsWith('.pdf')){show('err','Exporta tu factura a PDF y arrástrala aquí.');return}
 	pdfFile=f;
 	const reader=new FileReader();
@@ -67,6 +67,22 @@ function loadFile(f){
 	reader.readAsDataURL(f);
 	fields.classList.add('show');
 	fields.scrollIntoView({behavior:'smooth'});
+	// auto-extract fiscal fields from the PDF
+	show('ok','Extrayendo datos de tu factura…');
+	try{
+		const fd=new FormData();fd.append('invoice',f);
+		const res=await fetch('/v1/extract',{method:'POST',body:fd});
+		const j=await res.json();
+		if(!res.ok)throw new Error(j.detail||'fallo');
+		if(j.campos){
+			if(j.campos.nif)nif.value=j.campos.nif;
+			if(j.campos.base)base.value=j.campos.base;
+			if(j.campos.fecha)console.log('fecha:',j.campos.fecha);
+		}
+		show('ok',j.completo?'✓ Datos extraídos automáticamente. Revisa y confirma.':'Datos parciales ('+j.method+'). Completa lo que falte.');
+	}catch(err){
+		show('err','No se pudieron extraer datos automáticamente: '+err.message+' — rellena manualmente.');
+	}
 }
 document.getElementById('stampBtn').onclick=async()=>{
 	if(!pdfFile){show('err','Primero arrastra tu factura PDF');return}
