@@ -33,6 +33,7 @@ import (
 	"facturable/internal/verifactu/domain/qr"
 
 	"facturable/internal/sello"
+	"facturable/internal/sello/ingest"
 	"facturable/internal/sello/persistence"
 	"facturable/internal/verifactu/application"
 	"facturable/internal/verifactu/infrastructure/soap"
@@ -96,7 +97,7 @@ func main() {
 		Sistema: application.SystemInfo{
 			NombreProductor: "Facturable", NIFProductor: "B00000000", // productor real: T-8.1
 			NombreSistema: "Facturable Sello", IDSistema: "FS",
-			Version: version, NumeroInstalacion: "00001",
+			Version: version, NumeroInstalacion: installationNumber(nif),
 		},
 	}
 
@@ -118,6 +119,40 @@ func main() {
 		}
 	}
 
+	// Carpeta vigilada (v1.1): deja un CSV en var/inbox y se sella solo.
+	inbox := filepath.Join(filepath.Dir(db), "inbox")
+	if err := os.MkdirAll(inbox, 0o700); err != nil {
+		log.Printf("inbox: %v", err)
+	}
+	procesados := filepath.Join(inbox, "procesados")
+	_ = os.MkdirAll(procesados, 0o700)
+	go func() {
+		for range time.Tick(15 * time.Second) {
+			entries, err := os.ReadDir(inbox)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				if e.IsDir() || (!strings.HasSuffix(e.Name(), ".csv") && !strings.HasSuffix(e.Name(), ".CSV")) {
+					continue
+				}
+				path := filepath.Join(inbox, e.Name())
+				f, err := os.Open(path)
+				if err != nil {
+					continue
+				}
+				res, err := srv.IngestCSV(f)
+				_ = f.Close()
+				if err != nil {
+					log.Printf("inbox %s: %v", e.Name(), err)
+					continue
+				}
+				log.Printf("inbox %s: %d sellada(s), %d error(es)", e.Name(), res.Sellados, len(res.Errores))
+				_ = os.Rename(path, filepath.Join(procesados, e.Name()))
+			}
+		}
+	}()
+
 	// Planificador de remisión: la AEAT exige esperar entre envíos; un ciclo
 	// por minuto encaja con el control de flujo (spec AEAT §6.4.4.1).
 	go func() {
@@ -137,13 +172,17 @@ func main() {
 	certTries := newRateLimiter(5, time.Minute)
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /v1/certificates", func(w http.ResponseWriter, r *http.Request) {
-		if pin != "" && !certTries.allow(r.RemoteAddr) {
+		ip := r.RemoteAddr
+		if h, _, err := net.SplitHostPort(ip); err == nil {
+			ip = h
+		}
+		if pin != "" && !certTries.allow(ip) {
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(http.StatusTooManyRequests)
 			_ = json.NewEncoder(w).Encode(map[string]any{"title": "Too Many Requests", "status": 429, "detail": "demasiados intentos; espera un minuto"})
 			return
 		}
-		saveCertificate(w, r)
+		saveCertificate(pin)(w, r)
 	})
 	mux.HandleFunc("POST /v1/emails", guard(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -179,6 +218,47 @@ func main() {
 		}
 		writeJSON(w, map[string]any{"enviado": true, "to": req.To})
 	}))
+	// Quick form (bloqueante MVP): 5 fields, agent fills all defaults.
+	mux.HandleFunc("POST /v1/invoices", guard(func(w http.ResponseWriter, r *http.Request) {
+		var q sello.QuickInvoice
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&q); err != nil {
+			writeErr(w, err)
+			return
+		}
+		lastSerie, _, _, _, _, _, okL, err := store.Last(nif)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !okL {
+			lastSerie = ""
+		}
+		draft, err := q.ToDraft(lastSerie, time.Now())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		res, err := srv.IngestDrafts([]ingest.Draft{draft})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if res.Sellados == 0 && len(res.Errores) > 0 {
+			writeErr(w, fmt.Errorf("%s", res.Errores[0].Detalle))
+			return
+		}
+		writeJSON(w, map[string]any{
+			"sellada": true, "serie": draft.Series,
+			"cuota": draft.Breakdowns[0].Fee, "total": draft.Breakdowns[0].Base,
+		})
+	}))
+
+	// Embedded 1-screen UI: the invoice form the smallest business can use.
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(formUI))
+	})
+
 	mux.HandleFunc("GET /v1/version", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"data": map[string]string{"version": version}})
 	})
@@ -444,6 +524,57 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+const formUI = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Facturable — Nueva factura</title>
+<style>
+:root{--paper:#f4f2ec;--ink:#1d3a2f;--accent:#7a4a12;--muted:#5b6b72;--line:#d9d4c8}
+*{box-sizing:border-box}
+body{margin:0;font-family:'Source Sans 3',system-ui,sans-serif;background:var(--paper);color:var(--ink);display:flex;justify-content:center;min-height:100vh}
+main{max-width:560px;width:100%;padding:48px 24px}
+h1{font-size:28px;margin:0 0 8px}
+p.sub{color:var(--muted);margin:0 0 32px;font-size:15px}
+label{display:block;margin:14px 0 6px;font-weight:600;font-size:14px}
+input{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:4px;font-size:16px;background:#fff;color:var(--ink)}
+input:focus{outline:2px solid var(--accent);outline-offset:1px}
+.hint{color:var(--muted);font-size:12px;margin-top:4px}
+.row{display:flex;gap:12px}.row>div{flex:1}
+button{width:100%;margin-top:28px;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:17px;font-weight:600;cursor:pointer}
+button:disabled{opacity:0.5}
+.result{margin-top:20px;padding:14px;border-radius:4px;font-size:15px;display:none}
+.ok{background:#1d5c3f22;color:#1d3a2f}.err{background:#8a2f2222;color:#8a2f22}
+</style></head><body><main>
+<h1>Nueva factura</h1>
+<p class="sub">Serie, fecha, IVA y envío a Hacienda son automáticos. Tú solo rellenas esto:</p>
+<form id="f">
+<label for="cliente">Cliente</label><input id="cliente" required placeholder="Nombre del cliente">
+<label for="nif">NIF del cliente <span class="hint">(vacío si es particular)</span></label><input id="nif" placeholder="B12345678">
+<label for="concepto">Concepto</label><input id="concepto" required placeholder="Reparación fontanería">
+<div class="row">
+<div><label for="base">Base (€)</label><input id="base" required type="number" step="0.01" min="0.01" placeholder="100.00"></div>
+<div><label for="iva">IVA</label><input id="iva" value="21" list="ivas"><datalist id="ivas"><option value="21"><option value="10"><option value="4"><option value="0"></datalist></div>
+</div>
+<button type="submit">Sellar y enviar a Hacienda</button>
+</form>
+<div id="r" class="result"></div>
+<script>
+const f=document.getElementById('f'),r=document.getElementById('r');
+f.onsubmit=async(e)=>{
+e.preventDefault();
+const b=document.querySelector('button');b.disabled=true;b.textContent='Sellando…';
+r.className='result';r.style.display='none';
+try{
+const res=await fetch('/v1/invoices',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({cliente:cliente.value,nif:nif.value.trim(),concepto:concepto.value,base:base.value,iva:iva.value})});
+const j=await res.json();
+if(!res.ok){throw new Error(j.detail||JSON.stringify(j))}
+r.className='result ok';r.textContent='✓ Factura '+j.serie+' sellada y remitida. Cuota: '+j.cuota+' €';
+f.reset();iva.value='21';
+}catch(err){r.className='result err';r.textContent='✗ '+err.message}
+r.style.display='block';b.disabled=false;b.textContent='Sellar y enviar a Hacienda';
+};
+</script></main></body></html>`
+
 // qrEnv selects the QR cotejo environment per SELLO_AEAT.
 func qrEnv() qr.Environment {
 	if os.Getenv("SELLO_AEAT") == "produccion" {
@@ -491,39 +622,41 @@ func writeErr(w http.ResponseWriter, err error) {
 
 // saveCertificate recibe un P12 por multipart y lo instala (0600) para
 // el próximo arranque. Contraseña por formulario aparte: nunca se guarda.
-func saveCertificate(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(8 << 20); err != nil {
-		writeErr(w, fmt.Errorf("no se pudo leer el formulario: %v", err))
-		return
+func saveCertificate(pin string) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(8 << 20); err != nil {
+			writeErr(w, fmt.Errorf("no se pudo leer el formulario: %v", err))
+			return
+		}
+		f, _, err := r.FormFile("certificado")
+		if err != nil {
+			writeErr(w, fmt.Errorf("falta el fichero 'certificado' (P12/PFX)"))
+			return
+		}
+		defer f.Close()
+		raw, err := io.ReadAll(io.LimitReader(f, 4<<20))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if _, _, err := sslmatep12.Decode(raw, r.FormValue("password")); err != nil {
+			writeErr(w, fmt.Errorf("el certificado no es un P12 válido o la contraseña no es correcta: %v", err))
+			return
+		}
+		if err := os.MkdirAll("var/certificados", 0o700); err != nil {
+			writeErr(w, err)
+			return
+		}
+		dest := filepath.Join("var/certificados", "empresa.p12.enc")
+		if err := persistence.WriteSecret(dest, raw, pin); err != nil {
+			writeErr(w, fmt.Errorf("no se pudo cifrar el certificado: %v", err))
+			return
+		}
+		writeJSON(w, map[string]any{
+			"guardado": dest,
+			"nota":     "reinicia el agente con SELLO_CERT_P12=" + dest + " para remitir a la AEAT",
+		})
 	}
-	f, _, err := r.FormFile("certificado")
-	if err != nil {
-		writeErr(w, fmt.Errorf("falta el fichero 'certificado' (P12/PFX)"))
-		return
-	}
-	defer f.Close()
-	raw, err := io.ReadAll(io.LimitReader(f, 4<<20))
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	if _, _, err := sslmatep12.Decode(raw, r.FormValue("password")); err != nil {
-		writeErr(w, fmt.Errorf("el certificado no es un P12 válido o la contraseña no es correcta: %v", err))
-		return
-	}
-	if err := os.MkdirAll("var/certificados", 0o700); err != nil {
-		writeErr(w, err)
-		return
-	}
-	dest := filepath.Join("var/certificados", "empresa.p12")
-	if err := os.WriteFile(dest, raw, 0o600); err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{
-		"guardado": dest,
-		"nota":     "reinicia el agente con SELLO_CERT_P12=" + dest + " para remitir a la AEAT",
-	})
 }
 
 // checkConnectivity verifica carga del certificado y handshake TLS contra el

@@ -102,7 +102,9 @@ func ReadCSV(r io.Reader) (drafts []Draft, errores []RowError) {
 			// otherwise the silent merge would alter the invoice
 			if d.Date != strings.TrimSpace(row[index["fecha"]]) ||
 				d.Tipo != strings.ToUpper(strings.TrimSpace(row[index["tipo"]])) ||
-				d.ClientNIF != strings.TrimSpace(row[index["nif_cliente"]]) {
+				d.ClientNIF != strings.TrimSpace(row[index["nif_cliente"]]) ||
+				d.Description != strings.TrimSpace(row[index["descripcion"]]) ||
+				d.ClientName != strings.TrimSpace(row[index["nombre_cliente"]]) {
 				errores = append(errores, RowError{Fila: rowNum, Campo: "numero_serie",
 					Detalle: fmt.Sprintf("la serie %s ya apareció con otra fecha, tipo o cliente (audit fix: no se fusiona en silencio)", series)})
 				continue

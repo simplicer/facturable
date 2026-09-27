@@ -269,8 +269,8 @@ FROM registros WHERE nif=? ORDER BY id;`, nif)
 
 // LedgerRow es la vista del libro para la UI y la exportación.
 type LedgerRow struct {
-	UUID                   string
-	ID                     int64
+	UUID                   string `json:"uuid"`
+	ID                     int64  `json:"-"`
 	NIF, Serie, Date, Tipo string
 	Cuota, Importe, Huella string
 	Estado                 string

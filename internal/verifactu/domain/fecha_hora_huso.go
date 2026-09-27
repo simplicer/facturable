@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -24,6 +25,9 @@ type FechaHoraHuso struct {
 // NewFechaHoraHuso parses an ISO-8601 instant with explicit offset and
 // preserves its literal form.
 func NewFechaHoraHuso(raw string) (FechaHoraHuso, error) {
+	if strings.HasSuffix(strings.TrimSpace(raw), "Z") {
+		return FechaHoraHuso{}, fmt.Errorf("la AEAT exige offset numérico (+hh:mm), no Z: %s", raw)
+	}
 	trimmed := trimSpaces(raw)
 	if trimmed == "" {
 		return FechaHoraHuso{}, fmt.Errorf("la fecha y hora de generación del chainRow no puede estar vacía")

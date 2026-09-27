@@ -44,6 +44,12 @@ func (s *Service) IngestCSV(r io.Reader) (*IngestResult, error) {
 	res := &IngestResult{Errores: errores}
 
 	for _, b := range borradores {
+		if dup, err := s.Store.HasSeries(s.EmisorNIF, b.Series); err == nil && dup {
+			res.Errores = append(res.Errores, ingest.RowError{
+				Fila: b.Fila, Campo: "numero_serie",
+				Detalle: fmt.Sprintf("la factura %s ya consta en el libro (reenvío ignorado)", b.Series)})
+			continue
+		}
 		estado, err := s.chainState()
 		if err != nil {
 			return res, err

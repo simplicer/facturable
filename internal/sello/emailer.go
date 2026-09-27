@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/smtp"
 	"strings"
 )
@@ -26,9 +27,9 @@ func SendInvoiceEmail(cfg SMTPConfig, to, subject string, pdf []byte, filename s
 	if i := strings.LastIndex(cfg.Host, ":"); i > 0 {
 		host = cfg.Host[:i]
 	}
-	conn, err := tls.Dial("tcp", cfg.Host, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+	conn, err := net.Dial("tcp", cfg.Host)
 	if err != nil {
-		return fmt.Errorf("no se pudo conectar por TLS al servidor de correo: %w", err)
+		return fmt.Errorf("no se pudo conectar al servidor de correo: %w", err)
 	}
 	defer conn.Close()
 	client, err := smtp.NewClient(conn, host)
@@ -38,6 +39,9 @@ func SendInvoiceEmail(cfg SMTPConfig, to, subject string, pdf []byte, filename s
 	defer client.Close()
 	if ok, _ := client.Extension("STARTTLS"); !ok {
 		return fmt.Errorf("el servidor de correo no ofrece STARTTLS")
+	}
+	if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
+		return fmt.Errorf("STARTTLS rechazado: %w", err)
 	}
 	if cfg.User != "" {
 		auth := smtp.PlainAuth("", cfg.User, cfg.Password, host)

@@ -14,7 +14,6 @@ func TestNewFechaHoraHusoValid(t *testing.T) {
 	}{
 		{name: "spain peninsula offset", raw: "2024-11-04T12:36:39+01:00", want: "2024-11-04T12:36:39+01:00"},
 		{name: "canary offset", raw: "2024-11-04T11:36:39+00:00", want: "2024-11-04T11:36:39+00:00"},
-		{name: "utc marker", raw: "2024-01-01T19:20:30Z", want: "2024-01-01T19:20:30Z"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -74,5 +73,11 @@ func TestFromTimeUTCProduceOffsetNumerico(t *testing.T) {
 	}
 	if !strings.HasSuffix(raw, "+01:00") {
 		t.Fatalf("invierno debe ser +01:00: %s", raw)
+	}
+}
+
+func TestNewFechaHoraHusoRechazaZ(t *testing.T) {
+	if _, err := NewFechaHoraHuso("2024-01-01T19:20:30Z"); err == nil {
+		t.Fatal("Z debe ser rechazada: la AEAT exige offset numérico")
 	}
 }
