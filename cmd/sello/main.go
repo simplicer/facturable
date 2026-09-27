@@ -174,7 +174,11 @@ func main() {
 			if err != nil {
 				continue
 			}
+			processed := 0
 			for _, e := range entries {
+				if processed >= 10 { // inbox flood limit (audit: 500 PDFs at once)
+					break
+				}
 				if e.IsDir() || (!strings.HasSuffix(e.Name(), ".csv") && !strings.HasSuffix(e.Name(), ".CSV")) {
 					continue
 				}
@@ -191,6 +195,7 @@ func main() {
 				}
 				log.Printf("inbox %s: %d sellada(s), %d error(es)", e.Name(), res.Sellados, len(res.Errores))
 				_ = os.Rename(path, filepath.Join(procesados, e.Name()))
+				processed++
 			}
 		}
 	}()

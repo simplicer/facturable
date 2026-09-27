@@ -46,5 +46,6 @@ run-sello:
 
 clean:
 	rm -rf web/.svelte-kit web/build dist
+	@echo "NOT deleting var/ (contains your database and certificates)"
 
 e2e: cd web && npx playwright test
