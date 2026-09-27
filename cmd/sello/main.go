@@ -21,6 +21,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -951,29 +952,72 @@ func saveCertificate(pin string) func(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// aeatHandshake comprueba la accesibilidad TLS del entorno de pruebas de la
+// AEAT (prewww1). Variable de paquete para que los tests puenteen la red.
+var aeatHandshake = func() error {
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp",
+		"prewww1.aeat.es:443", &tls.Config{MinVersion: tls.VersionTLS12})
+	if err != nil {
+		return err
+	}
+	_ = conn.Close()
+	return nil
+}
+
+// certificateState carga el certificado configurado y devuelve su estado
+// junto al aviso de renovación cuando caduca pronto (el asistente lo muestra
+// antes de que un certificado caducado rompa la remisión en silencio).
+func certificateState(p12Path, password string) (estado, aviso string, err error) {
+	cert, err := soap.LoadP12(p12Path, password)
+	if err != nil {
+		return "", "", err
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return "", "", fmt.Errorf("no se pudo leer el certificado: %w", err)
+	}
+	return "ok", certExpiryWarning(leaf.NotAfter, time.Now()), nil
+}
+
+// certExpiryWarning devuelve el aviso de renovación cuando quedan menos de
+// 30 días de vida al certificado ("" en otro caso).
+func certExpiryWarning(notAfter, now time.Time) string {
+	days := int(notAfter.Sub(now).Hours() / 24)
+	switch {
+	case days <= 0:
+		return "⚠ Tu certificado ha caducado. Renuévalo en la FNMT."
+	case days < 30:
+		return fmt.Sprintf("⚠ Tu certificado caduca en %d días. Renuévalo en la FNMT.", days)
+	default:
+		return ""
+	}
+}
+
 // checkConnectivity verifica carga del certificado y handshake TLS contra el
-// entorno de pruebas de la AEAT (prewww1). Diagnóstico de onboarding.
+// entorno de pruebas de la AEAT (prewww1). Diagnóstico de onboarding; añade
+// la alerta de caducidad cuando quedan menos de 30 días.
 func checkConnectivity(w http.ResponseWriter, _ *http.Request) {
 	resultado := map[string]any{}
 	p12 := os.Getenv("SELLO_CERT_P12")
 	if p12 != "" {
-		if _, err := soap.LoadP12(p12, os.Getenv("SELLO_CERT_PASS")); err != nil {
+		estado, aviso, err := certificateState(p12, os.Getenv("SELLO_CERT_PASS"))
+		if err != nil {
 			resultado["certificado"] = "error: " + err.Error()
 			writeErr(w, fmt.Errorf("%v", resultado["certificado"]))
 			return
 		}
-		resultado["certificado"] = "ok"
+		resultado["certificado"] = estado
+		if aviso != "" {
+			resultado["aviso"] = aviso
+		}
 	} else {
 		resultado["certificado"] = "no configurado (modo simulado)"
 	}
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp",
-		"prewww1.aeat.es:443", &tls.Config{MinVersion: tls.VersionTLS12})
-	if err != nil {
+	if err := aeatHandshake(); err != nil {
 		resultado["aeat_pruebas"] = "error: " + err.Error()
 		writeJSON(w, resultado)
 		return
 	}
-	_ = conn.Close()
 	resultado["aeat_pruebas"] = "ok"
 	writeJSON(w, resultado)
 }
