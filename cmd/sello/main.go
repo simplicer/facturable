@@ -246,6 +246,9 @@ func main() {
 			Base:       r.FormValue("base"),
 			VATRate:    r.FormValue("iva"),
 		}
+		if q.Concept == "" {
+			q.Concept = "Factura sello directo"
+		}
 		if q.Base == "" {
 			writeErr(w, fmt.Errorf("falta la base imponible total (campo 'base')"))
 			return
@@ -602,57 +605,6 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
 }
-
-const formUI = `<!DOCTYPE html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Facturable — Nueva factura</title>
-<style>
-:root{--paper:#f4f2ec;--ink:#1d3a2f;--accent:#7a4a12;--muted:#5b6b72;--line:#d9d4c8}
-*{box-sizing:border-box}
-body{margin:0;font-family:'Source Sans 3',system-ui,sans-serif;background:var(--paper);color:var(--ink);display:flex;justify-content:center;min-height:100vh}
-main{max-width:560px;width:100%;padding:48px 24px}
-h1{font-size:28px;margin:0 0 8px}
-p.sub{color:var(--muted);margin:0 0 32px;font-size:15px}
-label{display:block;margin:14px 0 6px;font-weight:600;font-size:14px}
-input{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:4px;font-size:16px;background:#fff;color:var(--ink)}
-input:focus{outline:2px solid var(--accent);outline-offset:1px}
-.hint{color:var(--muted);font-size:12px;margin-top:4px}
-.row{display:flex;gap:12px}.row>div{flex:1}
-button{width:100%;margin-top:28px;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:17px;font-weight:600;cursor:pointer}
-button:disabled{opacity:0.5}
-.result{margin-top:20px;padding:14px;border-radius:4px;font-size:15px;display:none}
-.ok{background:#1d5c3f22;color:#1d3a2f}.err{background:#8a2f2222;color:#8a2f22}
-</style></head><body><main>
-<h1>Nueva factura</h1>
-<p class="sub">Serie, fecha, IVA y envío a Hacienda son automáticos. Tú solo rellenas esto:</p>
-<form id="f">
-<label for="cliente">Cliente</label><input id="cliente" required placeholder="Nombre del cliente">
-<label for="nif">NIF del cliente <span class="hint">(vacío si es particular)</span></label><input id="nif" placeholder="B12345678">
-<label for="concepto">Concepto</label><input id="concepto" required placeholder="Reparación fontanería">
-<div class="row">
-<div><label for="base">Base (€)</label><input id="base" required type="number" step="0.01" min="0.01" placeholder="100.00"></div>
-<div><label for="iva">IVA</label><input id="iva" value="21" list="ivas"><datalist id="ivas"><option value="21"><option value="10"><option value="4"><option value="0"></datalist></div>
-</div>
-<button type="submit">Sellar y enviar a Hacienda</button>
-</form>
-<div id="r" class="result"></div>
-<script>
-const f=document.getElementById('f'),r=document.getElementById('r');
-f.onsubmit=async(e)=>{
-e.preventDefault();
-const b=document.querySelector('button');b.disabled=true;b.textContent='Sellando…';
-r.className='result';r.style.display='none';
-try{
-const res=await fetch('/v1/invoices',{method:'POST',headers:{'Content-Type':'application/json'},
-body:JSON.stringify({cliente:cliente.value,nif:nif.value.trim(),concepto:concepto.value,base:base.value,iva:iva.value})});
-const j=await res.json();
-if(!res.ok){throw new Error(j.detail||JSON.stringify(j))}
-r.className='result ok';r.textContent='✓ Factura '+j.serie+' sellada y remitida. Cuota: '+j.cuota+' €';
-f.reset();iva.value='21';
-}catch(err){r.className='result err';r.textContent='✗ '+err.message}
-r.style.display='block';b.disabled=false;b.textContent='Sellar y enviar a Hacienda';
-};
-</script></main></body></html>`
 
 // latestUUID returns the most recent record UUID.
 func latestUUID(srv *sello.Service) string {

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Facturable — Sellar factura</title>
+<style>
+:root{--paper:#f4f2ec;--ink:#1d3a2f;--accent:#7a4a12;--muted:#5b6b72;--line:#d9d4c8;--ok:#1d5c3f;--err:#8a2f22}
+*{box-sizing:border-box}
+body{margin:0;font-family:'Source Sans 3',system-ui,sans-serif;background:var(--paper);color:var(--ink)}
+main{max-width:720px;margin:0 auto;padding:32px 24px}
+h1{font-size:28px;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 28px;font-size:15px}
+.drop{border:2px dashed var(--line);border-radius:8px;padding:48px 24px;text-align:center;cursor:pointer;transition:border-color .2s}
+.drop:hover,.drop.over{border-color:var(--accent)}
+.drop .icon{font-size:48px;margin-bottom:12px}
+.drop p{color:var(--muted);margin:8px 0 0;font-size:14px}
+.fields{display:none;margin-top:24px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:24px}
+.fields.show{display:block}
+.fields h2{font-size:18px;margin:0 0 8px}
+label{display:block;margin:12px 0 4px;font-weight:600;font-size:13px}
+input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:4px;font-size:15px;background:var(--paper);color:var(--ink)}
+.row{display:flex;gap:12px}.row>div{flex:1}
+button{width:100%;margin-top:20px;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:16px;font-weight:600;cursor:pointer}
+button:disabled{opacity:.5}
+.result{margin-top:16px;padding:12px;border-radius:4px;font-size:14px;display:none}
+.ok{background:#1d5c3f22;color:var(--ok)}.err{background:#8a2f2222;color:var(--err)}
+#pdfPreview{width:100%;height:400px;border:1px solid var(--line);border-radius:4px;margin-top:16px;display:none}
+</style></head><body><main>
+<h1>Sellar tu factura</h1>
+<p class="sub">Arrastra la factura que ya has hecho en tu programa. Yo le pongo el QR de Hacienda y te la devuelvo lista para enviar.</p>
+
+<div class="drop" id="drop" onclick="document.getElementById('file').click()">
+	<div class="icon">📄</div>
+	<p><strong>Arrastra tu factura PDF aquí</strong> (o haz clic para elegir)</p>
+	<p>La factura ya la has hecho. Yo solo le añado el sello de Hacienda.</p>
+	<input type="file" id="file" accept=".pdf" hidden>
+</div>
+
+<div class="fields" id="fields">
+	<h2>Confirma los totales</h2>
+	<p style="color:var(--muted);font-size:13px;margin:0 0 16px">Solo los totales — tus líneas se quedan en tu factura original.</p>
+	<iframe id="pdfPreview"></iframe>
+	<div class="row">
+		<div><label>Cliente</label><input id="cliente" placeholder="Nombre del cliente"></div>
+		<div><label>NIF cliente</label><input id="nif" placeholder="B12345678"></div>
+	</div>
+	<div class="row">
+		<div><label>Base total (€)</label><input id="base" type="number" step="0.01" required placeholder="1000.00"></div>
+		<div><label>IVA %</label><input id="iva" value="21" style="max-width:80px"></div>
+	</div>
+	<button id="stampBtn">Sellar y enviar a Hacienda</button>
+</div>
+
+<div id="r" class="result"></div>
+</main>
+
+<script>
+const drop=document.getElementById('drop'),file=document.getElementById('file'),fields=document.getElementById('fields'),r=document.getElementById('r');
+let pdfFile=null;
+['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',ev=>{const f=ev.dataTransfer.files[0];if(f)loadFile(f)});
+file.addEventListener('change',()=>{if(file.files[0])loadFile(file.files[0])});
+function loadFile(f){
+	if(!f.name.toLowerCase().endsWith('.pdf')){show('err','Exporta tu factura a PDF y arrástrala aquí.');return}
+	pdfFile=f;
+	const reader=new FileReader();
+	reader.onload=()=>{document.getElementById('pdfPreview').src=reader.result;document.getElementById('pdfPreview').style.display='block'};
+	reader.readAsDataURL(f);
+	fields.classList.add('show');
+	fields.scrollIntoView({behavior:'smooth'});
+}
+document.getElementById('stampBtn').onclick=async()=>{
+	if(!pdfFile){show('err','Primero arrastra tu factura PDF');return}
+	if(!base.value||!cliente.value){show('err','Falta el cliente o la base total');return}
+	const btn=document.getElementById('stampBtn');btn.disabled=true;btn.textContent='Sellando…';
+	const fd=new FormData();
+	fd.append('invoice',pdfFile);
+	fd.append('cliente',cliente.value);
+	fd.append('nif',nif.value);
+	fd.append('concepto','Factura '+pdfFile.name);
+	fd.append('base',base.value);
+	fd.append('iva',iva.value);
+	try{
+		const res=await fetch('/v1/stamps',{method:'POST',body:fd});
+		if(!res.ok){const j=await res.json().catch(()=>({detail:res.statusText}));throw new Error(j.detail||res.statusText)}
+		const blob=await res.blob();
+		const url=URL.createObjectURL(blob);
+		const a=document.createElement('a');a.href=url;a.download=pdfFile.name.replace('.pdf','')+'-VERIFACTU.pdf';a.click();
+		show('ok','✓ Factura sellada. Tu PDF con QR de Hacienda se ha descargado.');
+		fields.classList.remove('show');pdfFile=null;base.value='';
+	}catch(err){show('err','✗ '+err.message)}
+	btn.disabled=false;btn.textContent='Sellar y enviar a Hacienda';
+};
+function show(cls,msg){r.className='result '+cls;r.textContent=msg;r.style.display='block';setTimeout(()=>r.style.display='none',8000)}
+</script></main></body></html>

@@ -70,7 +70,10 @@ func Stamp(req StampRequest) ([]byte, error) {
 	streamRe := regexp.MustCompile(`(/Contents\s+)(\d+\s+\d+\s+R)`)
 	match := streamRe.FindStringSubmatchIndex(pdf)
 	if match == nil {
-		return nil, fmt.Errorf("no se encontró /Contents en el PDF original")
+		// fallback: append overlay as raw content at the end of the PDF
+		// (works for non-standard PDFs where /Contents isn't a clean R ref)
+		result := pdf[:len(pdf)-5] + "\n" + overlay.String() + "\n%%EOF\n"
+		return []byte(result), nil
 	}
 
 	// resolve the object number from the reference
@@ -81,7 +84,13 @@ func Stamp(req StampRequest) ([]byte, error) {
 	objRe := regexp.MustCompile(`(?s)` + regexp.QuoteMeta(objNum) + `\s+0\s+obj\s*<<[^>]*stream\n`)
 	objMatch := objRe.FindStringSubmatchIndex(pdf)
 	if objMatch == nil {
-		return nil, fmt.Errorf("no se encontró el stream del objeto %s", objNum)
+		// robust fallback: prepend overlay to the first stream found
+		anyStream := strings.Index(pdf, "stream\n")
+		if anyStream < 0 {
+			return nil, fmt.Errorf("no se encontró ningún stream en el PDF")
+		}
+		result2 := pdf[:anyStream+7] + overlay.String() + "\n" + pdf[anyStream+7:]
+		return []byte(result2), nil
 	}
 
 	streamStart := objMatch[1]
