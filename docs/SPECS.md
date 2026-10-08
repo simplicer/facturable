@@ -3,8 +3,8 @@
 ## Mission
 Compliance Veri*Factu for micro-SMEs without migrating their invoicing flow; data and certificate stay on their machine.
 
-## Hard regulatory facts (verified, see docs/informes/INFORME-VERIFACTU.md)
-- Mandatory: 2027-01-01 (corporate tax filers), 2027-07-01 (rest). RDL 15/2025.
+## Hard regulatory facts (verified, see docs/NORMATIVA.md)
+- Mandatory: 2028-10-01 for all taxpayers (postponed from 2026-01-01/2026-07-01 by RDL 15/2025 and RD 254/2025).
 - Record chain: SHA-256 uppercase hex 64, per (SIF, taxpayer), altas+anulaciones same chain, verify n-1/n-2 before n.
 - Hash inputs (alta): IDEmisorFactura + NumSerieFactura + FechaExpedicionFactura(DD-MM-AAAA) + TipoFactura + CuotaTotal + ImporteTotal + FechaHoraHusoGenRegistro(ISO8601+TZ) + previous Huella.
 - Batches: <=1000 records, one taxpayer per batch, wait TiempoEsperaEnvio seconds (initial 60) or until 1000 queued.

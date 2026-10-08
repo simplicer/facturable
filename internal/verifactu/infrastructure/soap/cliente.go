@@ -20,7 +20,7 @@ import (
 )
 
 // AeatEndpoints selects the official endpoint set (verified against the
-// production WSDL, see docs/informes/INFORME-VERIFACTU.md §7).
+// production WSDL, see docs/NORMATIVA.md).
 type AeatEndpoints struct {
 	PersonURL string
 	SealURL   string

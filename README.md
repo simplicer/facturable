@@ -91,12 +91,15 @@ Full contract: `docs/openapi.yaml`
 ## Legal / Legal
 
 This software implements the requirements of:
-- **RD 1007/2023** (RRSIF) — Reglamento de sistemas informáticos de facturación
-- **Orden HAC/1177/2024** — Technical specifications
+- **Ley 11/2021** (anti-fraud measures) — [BOE-A-2021-11473](https://www.boe.es/eli/es/l/2021/07/09/11)
+- **RD 1007/2023** (RRSIF) — Reglamento de sistemas informáticos de facturación — [BOE-A-2023-24840](https://www.boe.es/eli/es/rd/2023/12/05/1007)
+- **Orden HAC/1177/2024** — Technical specifications — [BOE-A-2024-22138](https://www.boe.es/eli/es/o/2024/10/17/hac1177)
+
+Every rule and its mapping to the code is documented in [docs/NORMATIVA.md](docs/NORMATIVA.md).
 
 Producer obligations (RRSIF art. 13-15): you must sign a responsible declaration before using this software commercially. See `GET /v1/declaration` for the template.
 
-Obligaciones del productor (RRSIF art. 13-15): debes firmar una declaración responsable antes de usar este software comercialmente. Ver `GET /v1/declaration` para la plantilla.
+Obligaciones del productor (RRSIF art. 13-15): debes firmar una declaración responsable antes de usar este software comercialmente. Ver `GET /v1/declaration` para la plantilla. Cada norma y su correspondencia con el código están documentadas en [docs/NORMATIVA.md](docs/NORMATIVA.md).
 
 ## License / Licencia
 

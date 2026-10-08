@@ -1,9 +1,9 @@
 // Package qr builds and validates the AEAT «URL de cotejo» (verification URL)
 // encoded in the Veri*Factu QR code of an invoice record.
 //
-// The URL never carries the fingerprint (huella): the official AEAT FAQ
-// states the QR only allows cotejo by NIF, invoice number, date and total
-// amount (see docs/informes/INFORME-VERIFACTU.md §6.3).
+// The URL never carries the fingerprint (huella): per AEAT, the QR only
+// allows cotejo by NIF, invoice number, date and total amount
+// (see docs/NORMATIVA.md).
 package qr
 
 import (
