@@ -22,9 +22,6 @@ lint: analyze
 analyze:
 	$(GO) vet ./...
 
-web-check:
-	cd web && npm run build
-
 version-check:
 	V=$$(cat VERSION); \
 	grep -q "$$V" CHANGELOG.md && \

@@ -14,17 +14,5 @@ services:
       interval: 30s
       timeout: 3s
       retries: 3
-  web:
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/status"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-    build:
-      context: ../web
-      dockerfile: ../infra/docker/Dockerfile.web
-    ports: ["3000:3000"]
-    depends_on: [api]
-volumes:
+
   api-data:
